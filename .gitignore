@@ -1,0 +1,24 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xcarchive
+
+# macOS
+.DS_Store
+
+# Cartridge images and saves must never be committed. The app ships no game
+# data, and neither does this repository.
+*.gba
+*.gb
+*.gbc
+*.sav
+*.srm
+*.rtc

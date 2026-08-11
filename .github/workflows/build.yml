@@ -1,0 +1,123 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (iOS, unsigned)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          # The project uses file-system-synchronized groups
+          # (objectVersion 77), which need Xcode 16 or later.
+          ls /Applications | grep -i '^Xcode' || true
+          latest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $latest"
+          sudo xcode-select -s "$latest/Contents/Developer"
+          xcodebuild -version
+
+      - name: Show scheme
+        run: xcodebuild -project DotMatrix.xcodeproj -list
+
+      - name: Build
+        run: |
+          set -o pipefail
+          # Unsigned: CI has no certificate, and compiling is the point here.
+          # Signing happens on-device via AltStore/SideStore, or locally in Xcode.
+          xcodebuild build \
+            -project DotMatrix.xcodeproj \
+            -scheme DotMatrix \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            2>&1 | tee build.log
+
+      - name: Summarize diagnostics
+        # Runs on failure too — this is the whole point of the job while the
+        # code is still being brought up.
+        if: always()
+        run: |
+          {
+            echo "## Build diagnostics"
+            echo
+
+            errors=$(grep -E '^[^ ].*:[0-9]+:[0-9]+: error:' build.log | sort -u || true)
+            warnings=$(grep -E '^[^ ].*:[0-9]+:[0-9]+: warning:' build.log | sort -u || true)
+
+            count_e=$(printf '%s' "$errors" | grep -c . || true)
+            count_w=$(printf '%s' "$warnings" | grep -c . || true)
+
+            echo "**${count_e} errors, ${count_w} warnings**"
+            echo
+
+            if [ "$count_e" -gt 0 ]; then
+              echo "### Errors"
+              echo '```'
+              # Strip the runner's workspace prefix to keep lines readable.
+              printf '%s\n' "$errors" | sed "s|$GITHUB_WORKSPACE/||" | head -100
+              echo '```'
+              echo
+              echo "### Errors by file"
+              echo '```'
+              printf '%s\n' "$errors" \
+                | sed "s|$GITHUB_WORKSPACE/||" \
+                | cut -d: -f1 | sort | uniq -c | sort -rn
+              echo '```'
+            fi
+
+            if [ "$count_w" -gt 0 ]; then
+              echo "<details><summary>Warnings (${count_w})</summary>"
+              echo
+              echo '```'
+              printf '%s\n' "$warnings" | sed "s|$GITHUB_WORKSPACE/||" | head -60
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14
+
+      - name: Package unsigned IPA
+        if: success()
+        run: |
+          app="build/Build/Products/Release-iphoneos/DotMatrix.app"
+          if [ ! -d "$app" ]; then
+            echo "No .app produced at $app" >&2
+            exit 1
+          fi
+          # An IPA is just a zip with the bundle under Payload/.
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry DotMatrix-unsigned.ipa Payload
+          ls -lh DotMatrix-unsigned.ipa
+
+      - name: Upload IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DotMatrix-unsigned-ipa
+          path: DotMatrix-unsigned.ipa
+          retention-days: 30
