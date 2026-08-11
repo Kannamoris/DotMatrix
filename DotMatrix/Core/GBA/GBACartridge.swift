@@ -110,45 +110,62 @@ final class GBACartridge {
     /// The toolchain leaves an ASCII marker naming the save hardware. Scanning
     /// for it is how every emulator picks the right backup chip, since nothing
     /// in the header records it.
+    ///
+    /// The scan checks every byte offset rather than assuming word alignment.
+    /// The markers usually are aligned, but "usually" isn't good enough: a miss
+    /// silently falls back to the wrong chip, and a cartridge given 64 KB when
+    /// it expects 128 KB appears to save and then loses the data.
     private static func detectSaveType(in bytes: [UInt8]) -> SaveType {
-        // Order matters: "FLASH1M_" and "FLASH512_" both contain "FLASH".
-        let markers: [(String, SaveType)] = [
-            ("FLASH1M_V", .flash128k),
-            ("FLASH512_V", .flash64k),
-            ("FLASH_V", .flash64k),
-            ("EEPROM_V", .eeprom8k),
-            ("SRAM_F_V", .sram),
-            ("SRAM_V", .sram),
+        // Longest first: "FLASH1M_" and "FLASH512_" both begin with "FLASH".
+        let markers: [([UInt8], SaveType)] = [
+            (Array("FLASH1M_V".utf8), .flash128k),
+            (Array("FLASH512_V".utf8), .flash64k),
+            (Array("FLASH_V".utf8), .flash64k),
+            (Array("EEPROM_V".utf8), .eeprom8k),
+            (Array("SRAM_F_V".utf8), .sram),
+            (Array("SRAM_V".utf8), .sram),
         ]
 
-        for (marker, type) in markers {
-            if find(marker: [UInt8](marker.utf8), in: bytes) {
-                return type
-            }
-        }
-        // Nothing found: 64 KB flash is the safest fallback — it is the most
-        // common, and a too-large buffer is harmless where a too-small one
-        // silently truncates saves.
-        return .flash64k
-    }
+        // One pass over the ROM rather than one per marker. Every marker starts
+        // with F, E or S, so the overwhelming majority of positions are
+        // rejected on a single comparison.
+        var candidates = Set<UInt8>()
+        for (marker, _) in markers { candidates.insert(marker[0]) }
 
-    private static func find(marker: [UInt8], in bytes: [UInt8]) -> Bool {
-        guard !marker.isEmpty, bytes.count >= marker.count else { return false }
-        let first = marker[0]
-        // Markers are word-aligned in practice, which cuts the scan by 4x.
-        var index = 0
-        while index <= bytes.count - marker.count {
-            if bytes[index] == first {
-                var matched = true
-                for offset in 1..<marker.count where bytes[index + offset] != marker[offset] {
-                    matched = false
-                    break
+        let longest = markers.map { $0.0.count }.max() ?? 0
+        guard bytes.count >= longest else { return .flash64k }
+        let limit = bytes.count - longest
+
+        var best: SaveType?
+
+        bytes.withUnsafeBufferPointer { buffer in
+            var index = 0
+            while index <= limit {
+                let byte = buffer[index]
+                if candidates.contains(byte) {
+                    for (marker, type) in markers where marker[0] == byte {
+                        var matched = true
+                        for offset in 1..<marker.count {
+                            if buffer[index + offset] != marker[offset] {
+                                matched = false
+                                break
+                            }
+                        }
+                        if matched {
+                            best = type
+                            return
+                        }
+                    }
                 }
-                if matched { return true }
+                index += 1
             }
-            index += 4
         }
-        return false
+
+        if let best { return best }
+
+        // Nothing found. 64 KB flash is the most common configuration, and a
+        // too-large buffer is harmless where a too-small one truncates saves.
+        return .flash64k
     }
 }
 

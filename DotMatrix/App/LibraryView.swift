@@ -42,17 +42,26 @@ struct LibraryView: View {
             }
             .fileImporter(
                 isPresented: $showImporter,
-                // `.data` is included because a .gba file from an unknown
-                // source is often typed as plain data rather than a declared UTI.
-                allowedContentTypes: [.gbaROM, .data],
-                allowsMultipleSelection: true
+                // `.item` rather than the exported `.gba` type: a cartridge
+                // image copied from a PC or another app frequently carries no
+                // type at all, and a stricter list leaves the picker's Open
+                // button inert with no explanation. The file is validated
+                // properly on import anyway.
+                allowedContentTypes: [.item],
+                // Single selection, so one tap imports. This app runs one
+                // cartridge; picking several was never useful, and multi-select
+                // requires a separate confirm step that reads as a dead button.
+                allowsMultipleSelection: false
             ) { result in
                 handleImport(result)
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView(settings: settings)
             }
-            .alert("Import failed", isPresented: .constant(importMessage != nil)) {
+            .alert("Import failed", isPresented: Binding(
+                get: { importMessage != nil },
+                set: { if !$0 { importMessage = nil } }
+            )) {
                 Button("OK") { importMessage = nil }
             } message: {
                 Text(importMessage ?? "")
@@ -167,15 +176,15 @@ struct LibraryView: View {
     private func handleImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            var failures: [String] = []
-            for url in urls {
-                if !library.importROM(from: url) {
-                    let reason = library.lastError ?? "Unrecognised file"
-                    failures.append("\(url.lastPathComponent): \(reason)")
-                }
+            guard let url = urls.first else {
+                importMessage = "The picker returned no file."
+                return
             }
-            if !failures.isEmpty {
-                importMessage = failures.joined(separator: "\n\n")
+            if !library.importROM(from: url) {
+                // Name the file explicitly — without a console, this alert is
+                // the only diagnostic available on-device.
+                let reason = library.lastError ?? "Unrecognised file"
+                importMessage = "\(url.lastPathComponent)\n\n\(reason)"
             }
         case .failure(let error):
             importMessage = error.localizedDescription
