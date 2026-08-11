@@ -42,12 +42,9 @@ struct LibraryView: View {
             }
             .fileImporter(
                 isPresented: $showImporter,
-                // `.item` rather than the exported `.gba` type: a cartridge
-                // image copied from a PC or another app frequently carries no
-                // type at all, and a stricter list leaves the picker's Open
-                // button inert with no explanation. The file is validated
-                // properly on import anyway.
-                allowedContentTypes: [.item],
+                // `.data` plus the app's exported type. Broadening this to
+                // `.item` made files unselectable entirely, so leave it alone.
+                allowedContentTypes: [.gbaROM, .data],
                 // Single selection, so one tap imports. This app runs one
                 // cartridge; picking several was never useful, and multi-select
                 // requires a separate confirm step that reads as a dead button.
@@ -145,9 +142,9 @@ struct LibraryView: View {
                 DotMatrix is an emulator. It contains no game data — you supply \
                 your own cartridge image.
 
-                Tap **+** to import a `.gba` file from Files, iCloud Drive, or \
-                anywhere else your device can reach. You can also drop files \
-                into DotMatrix's folder in the Files app.
+                Tap **+** to import a `.gba` file, or copy one into **On My \
+                iPhone → DotMatrix** in the Files app and pull down here to \
+                refresh.
                 """)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -162,6 +159,30 @@ struct LibraryView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+
+                Button("Check for dropped files") {
+                    library.lastError = nil
+                    library.reload()
+                }
+                .font(.footnote)
+
+                // Shown inline as well as in the alert. A rejected cartridge is
+                // the single most likely thing to go wrong here, and an alert
+                // that fails to present leaves no explanation at all.
+                if let error = library.lastError {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.orange.opacity(0.12))
+                        )
+                        .textSelection(.enabled)
+                }
 
                 Text("Dump the cartridge you own. Downloading a ROM of a game you don't have a copy of is illegal in most countries.")
                     .font(.caption)

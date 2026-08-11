@@ -42,6 +42,63 @@ final class ROMLibrary: ObservableObject {
         return base.appendingPathComponent("ROMs", isDirectory: true)
     }
 
+    /// The folder `UIFileSharingEnabled` exposes in the Files app. Anything
+    /// dropped here is adopted into the library on the next refresh.
+    private var documentsDirectory: URL {
+        fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    /// Take ownership of cartridge images the user copied in through the Files
+    /// app, so importing never depends on the document picker working.
+    ///
+    /// Returns a description of anything that was rejected, for display.
+    @discardableResult
+    private func adoptDroppedFiles() -> [String] {
+        guard let dropped = try? fileManager.contentsOfDirectory(
+            at: documentsDirectory,
+            includingPropertiesForKeys: nil
+        ) else { return [] }
+
+        var rejected: [String] = []
+
+        for url in dropped where url.pathExtension.lowercased() == "gba" {
+            do {
+                let data = try Data(contentsOf: url)
+                let cartridge = try GBACartridge(data: data, requireEmerald: Self.requireEmerald)
+
+                createDirectoryIfNeeded()
+                var destination = romsDirectory
+                    .appendingPathComponent(url.deletingPathExtension().lastPathComponent)
+                    .appendingPathExtension("gba")
+
+                var suffix = 2
+                while fileManager.fileExists(atPath: destination.path) {
+                    if let existing = try? Data(contentsOf: destination),
+                       let existingCartridge = try? GBACartridge(data: existing,
+                                                                 requireEmerald: Self.requireEmerald),
+                       existingCartridge.contentID == cartridge.contentID {
+                        // Already have this one; drop the duplicate.
+                        try? fileManager.removeItem(at: url)
+                        break
+                    }
+                    destination = romsDirectory
+                        .appendingPathComponent("\(url.deletingPathExtension().lastPathComponent) \(suffix)")
+                        .appendingPathExtension("gba")
+                    suffix += 1
+                }
+
+                if !fileManager.fileExists(atPath: url.path) { continue }
+                try fileManager.moveItem(at: url, to: destination)
+            } catch {
+                // Leave the file in place so the user can see it is still
+                // there, and say why it wasn't accepted.
+                rejected.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        return rejected
+    }
+
     init() {
         createDirectoryIfNeeded()
         reload()
@@ -53,6 +110,13 @@ final class ROMLibrary: ObservableObject {
 
     func reload() {
         createDirectoryIfNeeded()
+
+        // Pick up anything copied in through the Files app first.
+        let rejected = adoptDroppedFiles()
+        if !rejected.isEmpty {
+            lastError = rejected.joined(separator: "\n\n")
+        }
+
         guard let files = try? fileManager.contentsOfDirectory(
             at: romsDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey]
