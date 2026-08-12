@@ -7,8 +7,12 @@ struct EmulatorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    // The session is built asynchronously once the cartridge parses, so it
+    // can't be a `@StateObject` (those need their value at init). It lives in
+    // `@State` for lifecycle only — every view that reads its published
+    // properties takes it as an `@ObservedObject` instead, which is what
+    // actually subscribes to changes.
     @State private var session: EmulatorSession?
     @State private var loadError: String?
     @State private var showSettings = false
@@ -18,7 +22,7 @@ struct EmulatorView: View {
             Color.black.ignoresSafeArea()
 
             if let session {
-                content(for: session)
+                RunningSessionView(session: session, settings: settings)
             } else if let loadError {
                 errorState(loadError)
             } else {
@@ -36,12 +40,7 @@ struct EmulatorView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let session {
-                        Button {
-                            session.isPaused ? session.resume() : session.pause()
-                        } label: {
-                            Label(session.isPaused ? "Resume" : "Pause",
-                                  systemImage: session.isPaused ? "play.fill" : "pause.fill")
-                        }
+                        PauseMenuButton(session: session)
                     }
                     Button {
                         showSettings = true
@@ -60,7 +59,6 @@ struct EmulatorView: View {
             SettingsView(settings: settings)
         }
         .statusBarHidden()
-        // Games are meant to be looked at; don't let the display sleep.
         .persistentSystemOverlays(.hidden)
         .task {
             loadIfNeeded()
@@ -84,82 +82,6 @@ struct EmulatorView: View {
                 break
             }
         }
-    }
-
-    @ViewBuilder
-    private func content(for session: EmulatorSession) -> some View {
-        let isLandscape = verticalSizeClass == .compact
-
-        ZStack {
-            if isLandscape {
-                // Controls flank the screen rather than sitting under it.
-                display(for: session)
-                    .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 0) {
-                    display(for: session)
-                        .padding(.top, 8)
-                    Spacer(minLength: 0)
-                }
-            }
-
-            Gamepad(
-                onButtonsChanged: { session.setButtons($0) },
-                hapticsEnabled: settings.haptics
-            )
-            .ignoresSafeArea(.container, edges: .bottom)
-            .allowsHitTesting(!session.isPaused)
-
-            if session.isPaused {
-                pauseOverlay(session)
-            }
-
-            if settings.showFPS {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Text(String(format: "%.1f fps", session.measuredFPS))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.6))
-                            .padding(6)
-                    }
-                    Spacer()
-                }
-            }
-        }
-    }
-
-    private func display(for session: EmulatorSession) -> some View {
-        MetalDisplayView(
-            session: session,
-            gridStrength: settings.lcdGrid ? 1.0 : 0.0,
-            smoothing: settings.smoothing ? 1.0 : 0.0
-        )
-        .aspectRatio(
-            CGFloat(session.screenWidth) / CGFloat(session.screenHeight),
-            contentMode: .fit
-        )
-        .background(Color.black)
-        .accessibilityLabel("Game screen")
-    }
-
-    private func pauseOverlay(_ session: EmulatorSession) -> some View {
-        ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
-            VStack(spacing: 16) {
-                Image(systemName: "pause.circle.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.white.opacity(0.85))
-                Text("Paused")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Button("Resume") {
-                    session.resume()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .transition(.opacity)
     }
 
     private func errorState(_ message: String) -> some View {
@@ -194,6 +116,107 @@ struct EmulatorView: View {
             UIApplication.shared.isIdleTimerDisabled = true
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+}
+
+/// Everything that reads the session's published state.
+///
+/// Split out purely so the session can be an `@ObservedObject` here. Held in
+/// the parent's `@State` it published nothing, which is why the frame counter
+/// sat at its initial value and the pause button never changed label.
+private struct RunningSessionView: View {
+    @ObservedObject var session: EmulatorSession
+    @ObservedObject var settings: AppSettings
+
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    var body: some View {
+        let isLandscape = verticalSizeClass == .compact
+
+        ZStack {
+            if isLandscape {
+                // Controls flank the screen rather than sitting under it.
+                display
+                    .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 0) {
+                    display
+                        .padding(.top, 8)
+                    Spacer(minLength: 0)
+                }
+            }
+
+            Gamepad(
+                onButtonsChanged: { session.setButtons($0) },
+                hapticsEnabled: settings.haptics
+            )
+            .ignoresSafeArea(.container, edges: .bottom)
+            .allowsHitTesting(!session.isPaused)
+
+            if session.isPaused {
+                pauseOverlay
+            }
+
+            if settings.showFPS {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Text(String(format: "%.1f fps", session.measuredFPS))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.6))
+                            .padding(6)
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var display: some View {
+        MetalDisplayView(
+            session: session,
+            gridStrength: settings.lcdGrid ? 1.0 : 0.0,
+            smoothing: settings.smoothing ? 1.0 : 0.0
+        )
+        .aspectRatio(
+            CGFloat(session.screenWidth) / CGFloat(session.screenHeight),
+            contentMode: .fit
+        )
+        .background(Color.black)
+        .accessibilityLabel("Game screen")
+    }
+
+    private var pauseOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "pause.circle.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.white.opacity(0.85))
+                Text("Paused")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Button("Resume") {
+                    session.resume()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .transition(.opacity)
+    }
+}
+
+/// Separate so the label tracks the session's actual paused state.
+private struct PauseMenuButton: View {
+    @ObservedObject var session: EmulatorSession
+
+    var body: some View {
+        Button {
+            session.isPaused ? session.resume() : session.pause()
+        } label: {
+            Label(session.isPaused ? "Resume" : "Pause",
+                  systemImage: session.isPaused ? "play.fill" : "pause.fill")
         }
     }
 }
