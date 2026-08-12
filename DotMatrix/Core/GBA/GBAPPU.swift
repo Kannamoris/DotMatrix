@@ -500,6 +500,21 @@ final class GBAPPU {
             let halfWidth = boxWidth / 2
             let halfHeight = boxHeight / 2
 
+            // Vertical mosaic snaps the source row, so a block of scanlines all
+            // sample the same line of the sprite.
+            let sampledRow = useMosaic
+                ? rowInBox - (rowInBox % objMosaicHeight)
+                : rowInBox
+
+            // Horizontal mosaic is keyed on the *output* pixel, not the source:
+            // the transform keeps advancing and the sampled coordinate is only
+            // refreshed when screen X crosses a block boundary. Snapping the
+            // texture coordinate instead warps the sampling — it distorts the
+            // sprite rather than blocking it.
+            var heldTextureX = 0
+            var heldTextureY = 0
+            var holdingSample = false
+
             for columnInBox in 0..<boxWidth {
                 let screenX = spriteX + columnInBox
                 guard screenX >= 0 && screenX < Self.width else { continue }
@@ -508,29 +523,31 @@ final class GBAPPU {
                 var textureY: Int
 
                 if affine {
-                    // Transform around the sprite's centre.
+                    // Transform around the centre of the bounding box, mapping
+                    // to the centre of the sprite.
                     let offsetX = Int32(columnInBox - halfWidth)
-                    let offsetY = Int32(rowInBox - halfHeight)
+                    let offsetY = Int32(sampledRow - halfHeight)
                     textureX = Int(((pa * offsetX + pb * offsetY) >> 8)) + spriteWidth / 2
                     textureY = Int(((pc * offsetX + pd * offsetY) >> 8)) + spriteHeight / 2
                 } else {
                     textureX = columnInBox
-                    textureY = rowInBox
+                    textureY = sampledRow
                     if flipX { textureX = spriteWidth - 1 - textureX }
                     if flipY { textureY = spriteHeight - 1 - textureY }
                 }
 
+                if useMosaic {
+                    if !holdingSample || screenX % objMosaicWidth == 0 {
+                        heldTextureX = textureX
+                        heldTextureY = textureY
+                        holdingSample = true
+                    }
+                    textureX = heldTextureX
+                    textureY = heldTextureY
+                }
+
                 guard textureX >= 0, textureX < spriteWidth,
                       textureY >= 0, textureY < spriteHeight else { continue }
-
-                // OBJ mosaic, which was read from the register but never
-                // applied. It snaps the sampled coordinate to a block corner in
-                // sprite space, so it composes with the affine transform rather
-                // than replacing it.
-                if useMosaic {
-                    textureX = (textureX / objMosaicWidth) * objMosaicWidth
-                    textureY = (textureY / objMosaicHeight) * objMosaicHeight
-                }
 
                 // Locate the 8x8 tile within the sprite.
                 let tileColumn = textureX >> 3
