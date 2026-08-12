@@ -146,13 +146,22 @@ jobs:
               "document picker."
           )
 
+          # Must be a real, reachable URL. Sideloaders decode this field as a
+          # URL, and an empty string fails to decode — which surfaces as
+          # "the data couldn't be read because it isn't in the correct format"
+          # rather than anything pointing at the icon.
+          icon = (
+              f"https://raw.githubusercontent.com/{repo}/main/"
+              "DotMatrix/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          )
+
           app = {
               "name": "DotMatrix",
               "bundleIdentifier": "com.dotmatrix.app",
               "developerName": "Kannamoris",
               "subtitle": "Game Boy Advance emulator",
               "localizedDescription": description,
-              "iconURL": "",
+              "iconURL": icon,
               "tintColor": "4AB866",
               "screenshotURLs": [],
               # Legacy single-version fields, for older clients.
@@ -179,11 +188,25 @@ jobs:
               "identifier": "com.dotmatrix.source",
               "subtitle": "Game Boy Advance emulator",
               "description": description,
-              "iconURL": "",
+              "iconURL": icon,
               "tintColor": "4AB866",
               "apps": [app],
               "news": [],
           }
+
+          # Nothing may be an empty string: several of these fields decode as
+          # URLs on the client, and one empty value rejects the whole manifest.
+          def check(node, path=""):
+              if isinstance(node, dict):
+                  for key, value in node.items():
+                      check(value, f"{path}/{key}")
+              elif isinstance(node, list):
+                  for index, value in enumerate(node):
+                      check(value, f"{path}[{index}]")
+              elif node == "":
+                  raise SystemExit(f"empty string in manifest at {path}")
+
+          check(source)
 
           with open("source.json", "w") as handle:
               json.dump(source, handle, indent=2)
