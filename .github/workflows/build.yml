@@ -6,9 +6,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Needed to publish releases.
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Every build on main becomes a release, so the version has to advance on
+  # its own for a sideloader to notice there is something new.
+  APP_VERSION: 1.0.${{ github.run_number }}
 
 jobs:
   build:
@@ -23,26 +32,23 @@ jobs:
         run: |
           # The project uses file-system-synchronized groups
           # (objectVersion 77), which need Xcode 16 or later.
-          ls /Applications | grep -i '^Xcode' || true
           latest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
           echo "Using $latest"
           sudo xcode-select -s "$latest/Contents/Developer"
           xcodebuild -version
 
-      - name: Show scheme
-        run: xcodebuild -project DotMatrix.xcodeproj -list
-
       - name: Build
         run: |
           set -o pipefail
-          # Unsigned: CI has no certificate, and compiling is the point here.
-          # Signing happens on-device via AltStore/SideStore, or locally in Xcode.
+          # Unsigned: CI has no certificate. Feather signs on-device.
           xcodebuild build \
             -project DotMatrix.xcodeproj \
             -scheme DotMatrix \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -50,8 +56,6 @@ jobs:
             2>&1 | tee build.log
 
       - name: Summarize diagnostics
-        # Runs on failure too — this is the whole point of the job while the
-        # code is still being brought up.
         if: always()
         run: |
           {
@@ -70,7 +74,6 @@ jobs:
             if [ "$count_e" -gt 0 ]; then
               echo "### Errors"
               echo '```'
-              # Strip the runner's workspace prefix to keep lines readable.
               printf '%s\n' "$errors" | sed "s|$GITHUB_WORKSPACE/||" | head -100
               echo '```'
               echo
@@ -108,16 +111,116 @@ jobs:
             echo "No .app produced at $app" >&2
             exit 1
           fi
-          # An IPA is just a zip with the bundle under Payload/.
+          # An IPA is a zip with the bundle under Payload/.
           mkdir -p Payload
           cp -R "$app" Payload/
-          zip -qry DotMatrix-unsigned.ipa Payload
-          ls -lh DotMatrix-unsigned.ipa
+          zip -qry DotMatrix.ipa Payload
+          ls -lh DotMatrix.ipa
 
-      - name: Upload IPA
+      - name: Generate sideload source manifest
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          python3 - <<'PY'
+          import json, os, datetime, subprocess
+
+          version = os.environ["APP_VERSION"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          size = os.path.getsize("DotMatrix.ipa")
+          tag = f"v{version}"
+          download = f"https://github.com/{repo}/releases/download/{tag}/DotMatrix.ipa"
+
+          # Subject of the commit that triggered this build, as the changelog.
+          try:
+              subject = subprocess.check_output(
+                  ["git", "log", "-1", "--format=%s"], text=True
+              ).strip()
+          except Exception:
+              subject = "Latest build."
+
+          date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          description = (
+              "A Game Boy Advance emulator written in Swift.\n\n"
+              "Contains no game data and no BIOS. You supply your own "
+              "cartridge image, imported through the Files app or the "
+              "document picker."
+          )
+
+          app = {
+              "name": "DotMatrix",
+              "bundleIdentifier": "com.dotmatrix.app",
+              "developerName": "Kannamoris",
+              "subtitle": "Game Boy Advance emulator",
+              "localizedDescription": description,
+              "iconURL": "",
+              "tintColor": "4AB866",
+              "screenshotURLs": [],
+              # Legacy single-version fields, for older clients.
+              "version": version,
+              "versionDate": date,
+              "versionDescription": subject,
+              "downloadURL": download,
+              "size": size,
+              # Modern clients read this array instead.
+              "versions": [
+                  {
+                      "version": version,
+                      "date": date,
+                      "localizedDescription": subject,
+                      "downloadURL": download,
+                      "size": size,
+                      "minOSVersion": "17.0",
+                  }
+              ],
+          }
+
+          source = {
+              "name": "DotMatrix",
+              "identifier": "com.dotmatrix.source",
+              "subtitle": "Game Boy Advance emulator",
+              "description": description,
+              "iconURL": "",
+              "tintColor": "4AB866",
+              "apps": [app],
+              "news": [],
+          }
+
+          with open("source.json", "w") as handle:
+              json.dump(source, handle, indent=2)
+          print(json.dumps(source, indent=2)[:600])
+          PY
+
+      - name: Publish release
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${APP_VERSION}"
+          notes="$(git log -1 --format='%s%n%n%b')"
+
+          # Assets are attached in one call so the release is never briefly
+          # published without the IPA a sideloader is about to fetch.
+          gh release create "$tag" \
+            DotMatrix.ipa \
+            source.json \
+            --title "$tag" \
+            --notes "$notes" \
+            --target "$GITHUB_SHA"
+
+          echo "### Release published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$tag\` — [release page](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Feather source URL:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/source.json" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: DotMatrix-unsigned-ipa
-          path: DotMatrix-unsigned.ipa
+          path: DotMatrix.ipa
           retention-days: 30

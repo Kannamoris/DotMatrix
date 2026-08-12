@@ -39,20 +39,41 @@ above the CPU level impossible.
 `.github/workflows/build.yml` builds the app on a GitHub-hosted macOS runner on
 every push, so a Mac isn't needed to compile.
 
-The build is **unsigned** — CI has no certificate, and compiling is the point.
-Each successful run uploads two artifacts:
+The build is **unsigned** — CI has no certificate. Sideloaders sign on-device.
 
-- `build-log` — the full `xcodebuild` output
-- `DotMatrix-unsigned-ipa` — the app bundle wrapped as an `.ipa`
+Every push to `main` that builds cleanly publishes a GitHub Release tagged
+`v1.0.<run number>`, with two assets:
+
+- `DotMatrix.ipa` — the app
+- `source.json` — a sideload source manifest pointing at that IPA
 
 The job summary lists every error and warning grouped by file, so you can work
 through build failures from the run page without downloading the log.
 
-To get an unsigned IPA onto a device, use a sideloader that signs on-device —
-[SideStore](https://sidestore.io) or AltStore. A free Apple ID works; apps
-signed that way expire after seven days and need refreshing. Signing in CI
-instead would need a paid developer account and its certificate stored as a
-repository secret.
+## Installing with Feather
+
+Add this as a source in Feather (or AltStore / SideStore — the manifest is the
+standard format):
+
+```
+https://github.com/Kannamoris/DotMatrix/releases/latest/download/source.json
+```
+
+`releases/latest/download/...` is a permanent redirect to the newest release,
+so the URL never changes. Each build bumps the version, which is what makes a
+sideloader offer an update rather than ignoring it.
+
+Two things this depends on:
+
+- **The repository must be public.** Release assets on a private repo need an
+  authenticated request, and Feather sends none, so the download fails.
+- **Signing still happens on-device.** A free Apple ID works; those signatures
+  expire after seven days and need refreshing. Signing in CI instead would mean
+  a paid developer account with its certificate held as a repository secret.
+
+The app currently ships **no icon** — `AppIcon.appiconset` has no image in it,
+so the tile is blank on the home screen and in Feather's list. Dropping a
+1024×1024 PNG into that folder fixes it.
 
 ## Loading a cartridge
 
