@@ -458,14 +458,20 @@ final class GBAPPU {
             let boxWidth = doubleSize ? spriteWidth * 2 : spriteWidth
             let boxHeight = doubleSize ? spriteHeight * 2 : spriteHeight
 
-            var spriteY = Int(attr0 & 0xFF)
-            if spriteY >= 160 { spriteY -= 256 }
+            // Y is 8-bit and the comparison wraps at 256, which is what lets a
+            // sprite hang off the top of the screen. Masking reproduces that
+            // directly; treating Y as signed around the screen height instead
+            // gets tall sprites wrong.
+            let spriteY = Int(attr0 & 0xFF)
+            let rowInBox = (line - spriteY) & 0xFF
+            guard rowInBox < boxHeight else { continue }
 
-            let rowInBox = line - spriteY
-            guard rowInBox >= 0 && rowInBox < boxHeight else { continue }
-
+            // X is 9-bit two's complement, so the sign boundary is 256 — not
+            // the screen width. Extending at 240 relocated any sprite placed at
+            // X 240-255 to roughly -260, which is off the left edge: a scaled
+            // battler positioned near the right of the screen vanished.
             var spriteX = Int(attr1 & 0x1FF)
-            if spriteX >= 240 { spriteX -= 512 }
+            if spriteX >= 256 { spriteX -= 512 }
 
             let mode = Int((attr0 >> 10) & 0x3)
             let is256Color = attr0 & 0x2000 != 0
@@ -485,6 +491,11 @@ final class GBAPPU {
 
             let flipX = !affine && (attr1 & 0x1000 != 0)
             let flipY = !affine && (attr1 & 0x2000 != 0)
+
+            // MOSAIC bits 8-11 and 12-15 hold the OBJ block size, minus one.
+            let useMosaic = attr0 & 0x1000 != 0
+            let objMosaicWidth = Int((mosaic >> 8) & 0xF) + 1
+            let objMosaicHeight = Int((mosaic >> 12) & 0xF) + 1
 
             let halfWidth = boxWidth / 2
             let halfHeight = boxHeight / 2
@@ -511,6 +522,15 @@ final class GBAPPU {
 
                 guard textureX >= 0, textureX < spriteWidth,
                       textureY >= 0, textureY < spriteHeight else { continue }
+
+                // OBJ mosaic, which was read from the register but never
+                // applied. It snaps the sampled coordinate to a block corner in
+                // sprite space, so it composes with the affine transform rather
+                // than replacing it.
+                if useMosaic {
+                    textureX = (textureX / objMosaicWidth) * objMosaicWidth
+                    textureY = (textureY / objMosaicHeight) * objMosaicHeight
+                }
 
                 // Locate the 8x8 tile within the sprite.
                 let tileColumn = textureX >> 3
