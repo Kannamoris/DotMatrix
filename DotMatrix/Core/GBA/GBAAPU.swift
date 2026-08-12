@@ -123,21 +123,29 @@ final class GBAAPU {
 
     // MARK: Direct Sound plumbing
 
-    /// A timer overflowed. Advance whichever FIFOs are clocked from it, and ask
-    /// for a DMA refill when one runs low.
-    func timerOverflow(_ timer: Int, requestRefill: () -> Void) {
-        var needsRefill = false
+    /// A timer overflowed `times` times. Advance whichever FIFOs are clocked
+    /// from it, and ask for a DMA refill when one runs low.
+    ///
+    /// The count matters: each overflow consumes exactly one sample, so
+    /// treating a burst as a single event plays the effect back short and at
+    /// the wrong pitch.
+    func timerOverflow(_ timer: Int, times: Int, requestRefill: () -> Void) {
+        guard times > 0 else { return }
 
-        if directSoundTimer(forA: true) == timer {
-            currentSampleA = fifoA.pop() ?? 0
-            if fifoA.count <= 16 { needsRefill = true }
-        }
-        if directSoundTimer(forA: false) == timer {
-            currentSampleB = fifoB.pop() ?? 0
-            if fifoB.count <= 16 { needsRefill = true }
-        }
+        let drivesA = directSoundTimer(forA: true) == timer
+        let drivesB = directSoundTimer(forA: false) == timer
+        guard drivesA || drivesB else { return }
 
-        if needsRefill { requestRefill() }
+        for _ in 0..<times {
+            if drivesA { currentSampleA = fifoA.pop() ?? currentSampleA }
+            if drivesB { currentSampleB = fifoB.pop() ?? currentSampleB }
+
+            // Refill as soon as either FIFO is half empty, mid-burst rather
+            // than only at the end, so a long batch can't drain one dry.
+            if (drivesA && fifoA.count <= 16) || (drivesB && fifoB.count <= 16) {
+                requestRefill()
+            }
+        }
     }
 
     private func directSoundTimer(forA: Bool) -> Int {

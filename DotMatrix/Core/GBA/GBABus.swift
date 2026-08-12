@@ -112,8 +112,12 @@ final class GBABus: ARMBus {
     private func advancePeripherals(_ cycles: Int) {
         timers.step(cycles)
         // Timer overflows clock the sound FIFOs, which pull more samples in.
-        if timers.overflowedThisStep[0] { apu.timerOverflow(0) { runSoundDMA(timer: 0) } }
-        if timers.overflowedThisStep[1] { apu.timerOverflow(1) { runSoundDMA(timer: 1) } }
+        // Only timers 0 and 1 can drive Direct Sound.
+        for timer in 0...1 {
+            let overflows = timers.overflowedThisStep[timer]
+            guard overflows > 0 else { continue }
+            apu.timerOverflow(timer, times: overflows) { runSoundDMA(timer: timer) }
+        }
 
         apu.step(cycles)
 

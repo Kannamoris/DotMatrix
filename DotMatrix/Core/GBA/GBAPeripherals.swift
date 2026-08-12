@@ -82,7 +82,11 @@ final class TimerUnit {
 
     /// Overflows produced by the last `step`, so the sound FIFOs can be topped
     /// up by the channels that are clocked from a timer.
-    private(set) var overflowedThisStep: [Bool] = [false, false, false, false]
+    ///
+    /// A count, not a flag: a single `step` can span several timer periods when
+    /// the bus hands over a large batch of cycles, and collapsing those into one
+    /// drops Direct Sound samples and starves cascaded timers.
+    private(set) var overflowedThisStep: [Int] = [0, 0, 0, 0]
 
     private let interrupts: InterruptController
 
@@ -109,7 +113,7 @@ final class TimerUnit {
     }
 
     func step(_ cycles: Int) {
-        for i in 0..<4 { overflowedThisStep[i] = false }
+        for i in 0..<4 { overflowedThisStep[i] = 0 }
 
         for index in 0..<4 {
             guard timers[index].enabled else { continue }
@@ -118,7 +122,7 @@ final class TimerUnit {
             if timers[index].cascade && index > 0 {
                 // Cascade timers advance once per overflow of the one below,
                 // and ignore their own prescaler entirely.
-                ticks = overflowedThisStep[index - 1] ? 1 : 0
+                ticks = overflowedThisStep[index - 1]
             } else {
                 timers[index].accumulated += cycles
                 let prescaler = timers[index].prescaler
@@ -134,7 +138,7 @@ final class TimerUnit {
                 if remaining >= headroom {
                     remaining -= headroom
                     timers[index].counter = timers[index].reload
-                    overflowedThisStep[index] = true
+                    overflowedThisStep[index] += 1
                     if timers[index].irqEnabled {
                         interrupts.request(timerSource(index))
                     }
