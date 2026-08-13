@@ -210,6 +210,9 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         var framesThisSecond = 0
         var secondMarker = CFAbsoluteTimeGetCurrent()
         var lastSaveCheck = secondMarker
+        // Isolates the core's own cost from pacing sleeps and frame handoff,
+        // so a slow device and a slow core don't look the same in the overlay.
+        var runFrameSeconds: Double = 0
 
         // Fallback pacing for when audio is unavailable (the engine failed to
         // start, or output is routed somewhere that stalled) — otherwise the
@@ -266,7 +269,9 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
             }
 
             core.setButtons(state.buttons)
+            let frameStart = CFAbsoluteTimeGetCurrent()
             core.runFrame()
+            runFrameSeconds += CFAbsoluteTimeGetCurrent() - frameStart
             publishFrame()
 
             framesThisSecond += 1
@@ -274,11 +279,16 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
 
             if now - secondMarker >= 1.0 {
                 let fps = Double(framesThisSecond) / (now - secondMarker)
+                let avgRunFrameMs = runFrameSeconds / Double(framesThisSecond) * 1000
+                let budgetMs = 1000.0 / core.refreshRate
                 framesThisSecond = 0
+                runFrameSeconds = 0
                 secondMarker = now
                 // Sampled on this thread, which owns the core, and published
                 // to the main queue.
-                let diagnostics = formatVideoDiagnostics()
+                let perf = String(format: "PERF runFrame %.2fms/frame  budget %.2fms  fps %.1f",
+                                   avgRunFrameMs, budgetMs, fps)
+                let diagnostics = perf + "\n" + formatVideoDiagnostics()
                 let input = formatInputDiagnostics(state.buttons, presses: state.pressCount)
                 DispatchQueue.main.async { [weak self] in
                     self?.measuredFPS = fps
