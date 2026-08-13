@@ -52,6 +52,13 @@ protocol EmulatorCore: AnyObject {
     /// Read emulated memory, for the game-aware overlay. Returns 0 outside any
     /// mapped region.
     func readMemory(_ address: UInt32, count: Int) -> [UInt8]
+
+    /// Capture the entire machine, for a snapshot that can be reloaded later.
+    func captureState() -> Data
+
+    /// Restore a snapshot. Throws if it doesn't match this cartridge or this
+    /// build's format.
+    func restoreState(_ data: Data) throws
 }
 
 extension EmulatorCore {

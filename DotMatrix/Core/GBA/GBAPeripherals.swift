@@ -46,6 +46,17 @@ final class InterruptController {
     var shouldVector: Bool {
         masterEnable && hasPendingRequest
     }
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("IRQ ")
+        w.write(enable); w.write(flags); w.write(masterEnable)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("IRQ ")
+        enable = try r.readUInt16(); flags = try r.readUInt16()
+        masterEnable = try r.readBool()
+    }
 }
 
 // MARK: - Timers
@@ -199,6 +210,29 @@ final class TimerUnit {
                 }
             }
         }
+    }
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("TIM ")
+        for i in 0..<4 {
+            w.write(storage[i].reload); w.write(storage[i].counter)
+            w.write(storage[i].control); w.write(storage[i].accumulated)
+            w.write(overflowCounts[i])
+        }
+        w.write(UInt16(enabledMask)); w.write(anyOverflow)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("TIM ")
+        for i in 0..<4 {
+            storage[i].reload = try r.readUInt16()
+            storage[i].counter = try r.readUInt16()
+            storage[i].control = try r.readUInt16()
+            storage[i].accumulated = try r.readInt()
+            overflowCounts[i] = try r.readInt()
+        }
+        enabledMask = UInt8(truncatingIfNeeded: try r.readUInt16())
+        anyOverflow = try r.readBool()
     }
 
     private func timerSource(_ index: Int) -> IRQSource {
@@ -372,6 +406,29 @@ final class DMAController {
 
         if channel.irqOnComplete {
             interrupts.request(dmaSource(index))
+        }
+    }
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("DMA ")
+        for c in channels {
+            w.write(c.source); w.write(c.destination); w.write(c.wordCount); w.write(c.control)
+            w.write(c.currentSource); w.write(c.currentDestination)
+            w.write(c.remaining); w.write(c.active)
+        }
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("DMA ")
+        for i in 0..<4 {
+            channels[i].source = try r.readUInt32()
+            channels[i].destination = try r.readUInt32()
+            channels[i].wordCount = try r.readUInt16()
+            channels[i].control = try r.readUInt16()
+            channels[i].currentSource = try r.readUInt32()
+            channels[i].currentDestination = try r.readUInt32()
+            channels[i].remaining = try r.readInt()
+            channels[i].active = try r.readBool()
         }
     }
 

@@ -42,6 +42,21 @@ struct EmulatorView: View {
                     if let session {
                         PauseMenuButton(session: session)
                     }
+                    if let session {
+                        Divider()
+                        Button {
+                            session.requestSnapshot()
+                        } label: {
+                            Label("Save Snapshot", systemImage: "camera")
+                        }
+                        Button {
+                            session.requestRestore()
+                        } label: {
+                            Label("Load Snapshot", systemImage: "arrow.uturn.backward")
+                        }
+                        .disabled(!session.hasSnapshot)
+                        Divider()
+                    }
                     Button {
                         showSettings = true
                     } label: {
@@ -57,6 +72,14 @@ struct EmulatorView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings)
+        }
+        .alert("Snapshot", isPresented: Binding(
+            get: { session?.stateMessage != nil },
+            set: { if !$0 { session?.clearStateMessage() } }
+        )) {
+            Button("OK") { session?.clearStateMessage() }
+        } message: {
+            Text(session?.stateMessage ?? "")
         }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)

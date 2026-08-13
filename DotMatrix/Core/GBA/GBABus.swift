@@ -1099,4 +1099,41 @@ final class GBABus: ARMBus {
             cpu?.halted = false
         }
     }
+
+    // MARK: Snapshot
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("BUS ")
+        w.write(ewram); w.write(iwram)
+        w.write(buttons.rawValue); w.write(keyControl); w.write(waitControl)
+        w.write(UInt16(postFlag)); w.write(halted)
+        w.write(openBus); w.write(lastBIOSFetch)
+        w.write(totalCycles); w.write(pendingCycles); w.write(deferredCycles)
+
+        interrupts.encodeState(into: &w)
+        timers.encodeState(into: &w)
+        dma.encodeState(into: &w)
+        ppu.encodeState(into: &w)
+        gpio.encodeState(into: &w)
+        cartridge.backup.encodeState(into: &w)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("BUS ")
+        ewram = try r.readBytes(); iwram = try r.readBytes()
+        buttons = GBAButtons(rawValue: try r.readUInt16())
+        keyControl = try r.readUInt16(); waitControl = try r.readUInt16()
+        postFlag = UInt8(truncatingIfNeeded: try r.readUInt16())
+        halted = try r.readBool()
+        openBus = try r.readUInt32(); lastBIOSFetch = try r.readUInt32()
+        totalCycles = try r.readInt()
+        pendingCycles = try r.readInt(); deferredCycles = try r.readInt()
+
+        try interrupts.decodeState(from: &r)
+        try timers.decodeState(from: &r)
+        try dma.decodeState(from: &r)
+        try ppu.decodeState(from: &r)
+        try gpio.decodeState(from: &r)
+        try cartridge.backup.decodeState(from: &r)
+    }
 }

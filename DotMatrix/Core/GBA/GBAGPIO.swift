@@ -82,6 +82,21 @@ final class CartridgeGPIO {
     /// the app being closed rather than restarting from the host clock.
     var saveState: [String: Int] { rtc.saveState }
     func restore(_ state: [String: Int]) { rtc.restore(state) }
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("GPIO")
+        w.write(writtenData); w.write(direction); w.write(readable)
+        let clock = rtc.saveState
+        w.write(clock["rtcOffset"] ?? 0); w.write(clock["rtcStatus"] ?? 0x40)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("GPIO")
+        writtenData = try r.readUInt16(); direction = try r.readUInt16()
+        readable = try r.readBool()
+        let offset = try r.readInt(); let status = try r.readInt()
+        rtc.restore(["rtcOffset": offset, "rtcStatus": status])
+    }
 }
 
 /// Seiko S-3511A.

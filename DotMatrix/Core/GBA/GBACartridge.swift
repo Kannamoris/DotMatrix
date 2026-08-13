@@ -184,6 +184,9 @@ protocol BackupMedium: AnyObject {
     /// Advance the medium's own clock. Programming and erasing flash take real
     /// time on the chip, and drivers watch for the busy signal that implies.
     func advance(_ cycles: Int)
+
+    func encodeState(into w: inout StateWriter)
+    func decodeState(from r: inout StateReader) throws
 }
 
 /// Plain battery-backed static RAM. Directly addressable, no protocol.
@@ -192,6 +195,14 @@ final class SRAMBackup: BackupMedium {
     var isDirty = false
 
     func advance(_ cycles: Int) {}
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("SRAM"); w.write(storage)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("SRAM"); storage = try r.readBytes()
+    }
 
     init(size: Int) {
         // Save media erase to 0xFF; games check for that to detect a fresh chip.
@@ -264,6 +275,46 @@ final class FlashBackup: BackupMedium {
         if busyCyclesRemaining <= 0 {
             busyCyclesRemaining = 0
             settlingSector = -1
+        }
+    }
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("FLSH")
+        w.write(storage)
+        w.write(bank); w.write(idMode); w.write(eraseArmed)
+        w.write(writeArmed); w.write(bankSwitchArmed)
+        w.write(phaseCode); w.write(busyCyclesRemaining); w.write(settlingSector)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("FLSH")
+        storage = try r.readBytes()
+        bank = try r.readInt(); idMode = try r.readBool(); eraseArmed = try r.readBool()
+        writeArmed = try r.readBool(); bankSwitchArmed = try r.readBool()
+        phaseCode = try r.readInt()
+        busyCyclesRemaining = try r.readInt(); settlingSector = try r.readInt()
+    }
+
+    /// The command phase as a plain integer, so the snapshot has no dependency
+    /// on the enum's declaration order.
+    private var phaseCode: Int {
+        get {
+            switch phase {
+            case .ready: return 0
+            case .unlock1: return 1
+            case .unlock2: return 2
+            case .eraseUnlock1: return 3
+            case .eraseUnlock2: return 4
+            }
+        }
+        set {
+            switch newValue {
+            case 1: phase = .unlock1
+            case 2: phase = .unlock2
+            case 3: phase = .eraseUnlock1
+            case 4: phase = .eraseUnlock2
+            default: phase = .ready
+            }
         }
     }
 
@@ -409,6 +460,14 @@ final class EEPROMBackup: BackupMedium {
     var isDirty = false
 
     func advance(_ cycles: Int) {}
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("EEPR"); w.write(storage)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("EEPR"); storage = try r.readBytes()
+    }
 
     init(size: Int) {
         storage = [UInt8](repeating: 0xFF, count: max(size, 512))

@@ -913,4 +913,37 @@ final class GBAPPU {
     private func signExtend28(_ value: Int32) -> Int32 {
         (value & 0x0800_0000) != 0 ? value | Int32(bitPattern: 0xF000_0000) : value & 0x0FFF_FFFF
     }
+
+    // MARK: Snapshot
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("PPU ")
+        w.write(palette); w.write(vram); w.write(oam)
+        w.write(dispcnt); w.write(dispstat); w.write(vcount)
+        w.write(bgControl); w.write(bgHorizontalOffset); w.write(bgVerticalOffset)
+        w.write(affineA); w.write(affineB); w.write(affineC); w.write(affineD)
+        w.write(affineRefX); w.write(affineRefY)
+        w.write(affineCurrentX); w.write(affineCurrentY)
+        w.write(windowH); w.write(windowV); w.write(windowIn); w.write(windowOut)
+        w.write(mosaic); w.write(blendControl); w.write(blendAlpha); w.write(blendBrightness)
+        w.write(dot); w.write(frameComplete)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("PPU ")
+        palette = try r.readBytes(); vram = try r.readBytes(); oam = try r.readBytes()
+        dispcnt = try r.readUInt16(); dispstat = try r.readUInt16(); vcount = try r.readUInt16()
+        bgControl = try r.readUInt16Array()
+        bgHorizontalOffset = try r.readUInt16Array()
+        bgVerticalOffset = try r.readUInt16Array()
+        affineA = try r.readInt16Array(); affineB = try r.readInt16Array()
+        affineC = try r.readInt16Array(); affineD = try r.readInt16Array()
+        affineRefX = try r.readInt32Array(); affineRefY = try r.readInt32Array()
+        affineCurrentX = try r.readInt32Array(); affineCurrentY = try r.readInt32Array()
+        windowH = try r.readUInt16Array(); windowV = try r.readUInt16Array()
+        windowIn = try r.readUInt16(); windowOut = try r.readUInt16()
+        mosaic = try r.readUInt16(); blendControl = try r.readUInt16()
+        blendAlpha = try r.readUInt16(); blendBrightness = try r.readUInt16()
+        dot = try r.readInt(); frameComplete = try r.readBool()
+    }
 }

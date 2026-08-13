@@ -25,6 +25,10 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     /// which looks identical to the game being stuck.
     @Published private(set) var inputDiagnostics: String = ""
 
+    /// Result of the last snapshot operation, for surfacing in the UI.
+    @Published private(set) var stateMessage: String?
+    @Published private(set) var hasSnapshot = false
+
     let displayTitle: String
     let contentID: String
     let screenWidth: Int
@@ -34,6 +38,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     private let core: any EmulatorCore
     private let audio = AudioEngine()
     private let saves = SaveManager()
+    private let states = StateManager()
 
     private struct ControlState {
         var running = false
@@ -41,6 +46,9 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         var fastForward = false
         var audioActive = false
         var forceFlushRequested = false
+        /// Snapshot work is done on the emulation thread, which owns the core.
+        var snapshotRequested = false
+        var restoreRequested = false
         var buttons = GBAButtons()
         /// Counts transitions from nothing-held to something-held.
         var pressCount = 0
@@ -66,6 +74,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         // Restore the in-game save before the CPU ever runs.
         saves.load(into: core, contentID: contentID)
         audio.attach(core: core)
+        hasSnapshot = states.hasState(for: contentID)
     }
 
     deinit {
@@ -143,6 +152,16 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         isPaused = false
     }
 
+    /// Snapshot the machine. The work happens on the emulation thread.
+    func requestSnapshot() {
+        control.withLock { $0.snapshotRequested = true }
+    }
+
+    /// Reload the snapshot, discarding current progress.
+    func requestRestore() {
+        control.withLock { $0.restoreRequested = true }
+    }
+
     /// Request an out-of-band save write, e.g. when heading to the background.
     func requestSaveFlush() {
         control.withLock { $0.forceFlushRequested = true }
@@ -157,6 +176,8 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     }
 
     // MARK: Input
+
+    func clearStateMessage() { stateMessage = nil }
 
     func setButtons(_ buttons: GBAButtons) {
         control.withLock {
@@ -202,6 +223,23 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
             if state.forceFlushRequested {
                 control.withLock { $0.forceFlushRequested = false }
                 saves.forceFlush(core, contentID: contentID)
+            }
+
+            if state.snapshotRequested {
+                control.withLock { $0.snapshotRequested = false }
+                let failure = states.save(core, contentID: contentID)
+                DispatchQueue.main.async { [weak self] in
+                    self?.stateMessage = failure ?? "Snapshot saved."
+                    self?.hasSnapshot = failure == nil
+                }
+            }
+
+            if state.restoreRequested {
+                control.withLock { $0.restoreRequested = false }
+                let failure = states.load(into: core, contentID: contentID)
+                DispatchQueue.main.async { [weak self] in
+                    self?.stateMessage = failure ?? "Snapshot loaded."
+                }
             }
 
             if state.paused {

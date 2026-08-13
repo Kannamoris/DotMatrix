@@ -99,4 +99,48 @@ final class GBASystem: EmulatorCore {
         }
         return result
     }
+
+    // MARK: Snapshots
+
+    /// Capture the whole machine.
+    ///
+    /// Audio channel state is deliberately left out: it has no bearing on game
+    /// logic and restoring it is not worth the coupling. Expect a brief click
+    /// on load, nothing more.
+    func captureState() -> Data {
+        var w = StateWriter()
+        w.write(SaveStateFormat.magic)
+        w.write(SaveStateFormat.version)
+        // Tie the snapshot to the cartridge it came from.
+        w.write(Array(cartridge.gameCode.utf8))
+        w.write(cartridge.rom.count)
+
+        cpu.encodeState(into: &w)
+        bus.encodeState(into: &w)
+        return w.data
+    }
+
+    /// Restore a snapshot. Throws rather than half-applying: a partially
+    /// restored machine is worse than a refused load.
+    func restoreState(_ data: Data) throws {
+        var r = StateReader(data)
+        guard try r.readUInt32() == SaveStateFormat.magic else {
+            throw StateReader.Failure.truncated
+        }
+        let version = try r.readInt()
+        guard version == SaveStateFormat.version else {
+            throw StateReader.Failure.unsupportedVersion(version)
+        }
+        let code = String(decoding: try r.readBytes(), as: UTF8.self)
+        let size = try r.readInt()
+        guard code == cartridge.gameCode, size == cartridge.rom.count else {
+            throw StateReader.Failure.wrongCartridge
+        }
+
+        try cpu.decodeState(from: &r)
+        try bus.decodeState(from: &r)
+
+        // The audio buffer belongs to the old timeline.
+        flushAudio()
+    }
 }

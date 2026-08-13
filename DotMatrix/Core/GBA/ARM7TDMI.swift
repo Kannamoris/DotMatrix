@@ -448,4 +448,35 @@ final class ARM7TDMI {
         branched = true
         nextFetchSequential = false
     }
+
+    // MARK: Snapshot
+
+    func encodeState(into w: inout StateWriter) {
+        w.mark("CPU ")
+        w.write(registers)
+        w.write(bankedSP); w.write(bankedLR); w.write(bankedFIQ)
+        w.write(savedUserR8R12); w.write(bankedSPSR)
+        w.write(mode.rawValue)
+        w.write(negative); w.write(zero); w.write(carry); w.write(overflow)
+        w.write(irqDisabled); w.write(fiqDisabled); w.write(thumb)
+        w.write(branched); w.write(halted); w.write(nextFetchSequential)
+    }
+
+    func decodeState(from r: inout StateReader) throws {
+        try r.expect("CPU ")
+        registers = try r.readUInt32Array()
+        bankedSP = try r.readUInt32Array()
+        bankedLR = try r.readUInt32Array()
+        bankedFIQ = try r.readUInt32Array()
+        savedUserR8R12 = try r.readUInt32Array()
+        bankedSPSR = try r.readUInt32Array()
+        // Assign directly: switchMode would shuffle the banks we just restored.
+        mode = CPUMode(rawValue: try r.readUInt32()) ?? .system
+        negative = try r.readBool(); zero = try r.readBool()
+        carry = try r.readBool(); overflow = try r.readBool()
+        irqDisabled = try r.readBool(); fiqDisabled = try r.readBool()
+        thumb = try r.readBool()
+        branched = try r.readBool(); halted = try r.readBool()
+        nextFetchSequential = try r.readBool()
+    }
 }
