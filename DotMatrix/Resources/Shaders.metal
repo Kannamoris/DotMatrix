@@ -13,6 +13,10 @@ struct DisplayUniforms {
     float gridStrength;
     // 0 = nearest neighbour, 1 = smoothed.
     float smoothing;
+    // Sub-region of the source to show, normalised: xy = origin, zw = size.
+    // The battle view uses this to drop the game's own menu and message box
+    // and present only the battlefield.
+    float4 sourceRect;
 };
 
 /// Fullscreen triangle. Cheaper than a quad and avoids the diagonal seam.
@@ -32,14 +36,17 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
     constexpr sampler nearestSampler(filter::nearest, address::clamp_to_edge);
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
 
-    float4 color = mix(source.sample(nearestSampler, in.texCoord),
-                       source.sample(linearSampler, in.texCoord),
+    // Remap into the requested sub-region before sampling.
+    float2 coord = uniforms.sourceRect.xy + in.texCoord * uniforms.sourceRect.zw;
+
+    float4 color = mix(source.sample(nearestSampler, coord),
+                       source.sample(linearSampler, coord),
                        uniforms.smoothing);
 
     // Darken the pixel edges to suggest the gaps between LCD cells. Only
     // visible when each source pixel covers several output pixels.
     if (uniforms.gridStrength > 0.0) {
-        float2 pixel = in.texCoord * uniforms.sourceSize;
+        float2 pixel = coord * uniforms.sourceSize;
         float2 distanceToEdge = abs(fract(pixel) - 0.5) * 2.0;
         float edge = max(distanceToEdge.x, distanceToEdge.y);
         float grid = smoothstep(0.75, 1.0, edge);

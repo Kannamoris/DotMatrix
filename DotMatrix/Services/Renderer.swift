@@ -12,6 +12,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         var sourceSize: SIMD2<Float>
         var gridStrength: Float
         var smoothing: Float
+        var sourceRect: SIMD4<Float>
     }
 
     private let device: MTLDevice
@@ -25,6 +26,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Set from the UI; read on the render thread.
     var gridStrength: Float = 0.0
     var smoothing: Float = 0.0
+    /// Sub-region of the framebuffer to display, in source pixels. Defaults to
+    /// the whole screen.
+    var sourceRect: CGRect?
 
     /// Supplies the pixels to draw. Called once per view frame.
     var frameProvider: ((UnsafeMutableRawPointer, Int) -> Void)?
@@ -110,10 +114,17 @@ final class Renderer: NSObject, MTKViewDelegate {
             return
         }
 
+        let region = sourceRect ?? CGRect(x: 0, y: 0, width: width, height: height)
         var uniforms = DisplayUniforms(
             sourceSize: SIMD2<Float>(Float(width), Float(height)),
             gridStrength: gridStrength,
-            smoothing: smoothing
+            smoothing: smoothing,
+            sourceRect: SIMD4<Float>(
+                Float(region.origin.x) / Float(width),
+                Float(region.origin.y) / Float(height),
+                Float(region.width) / Float(width),
+                Float(region.height) / Float(height)
+            )
         )
 
         encoder.setRenderPipelineState(pipelineState)

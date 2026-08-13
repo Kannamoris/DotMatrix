@@ -6,6 +6,8 @@ struct MetalDisplayView: UIViewRepresentable {
     let session: EmulatorSession
     var gridStrength: Float
     var smoothing: Float
+    /// Optional crop, in source pixels. Nil shows the whole screen.
+    var sourceRect: CGRect? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -43,6 +45,7 @@ struct MetalDisplayView: UIViewRepresentable {
         }
         renderer.gridStrength = gridStrength
         renderer.smoothing = smoothing
+        renderer.sourceRect = sourceRect
 
         context.coordinator.renderer = renderer
         view.delegate = renderer
@@ -53,6 +56,7 @@ struct MetalDisplayView: UIViewRepresentable {
     func updateUIView(_ uiView: MTKView, context: Context) {
         context.coordinator.renderer?.gridStrength = gridStrength
         context.coordinator.renderer?.smoothing = smoothing
+        context.coordinator.renderer?.sourceRect = sourceRect
     }
 
     static func dismantleUIView(_ uiView: MTKView, coordinator: Coordinator) {
