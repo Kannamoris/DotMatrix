@@ -99,8 +99,12 @@ final class GBAPPU {
     // MARK: Stepping
 
     func step(_ cycles: Int) {
-        frameComplete = false
-
+        // `frameComplete` is deliberately not cleared here. The bus drains
+        // deferred cycles by calling this repeatedly within a single CPU step,
+        // so clearing on entry erases a frame boundary that the caller has not
+        // observed yet — the frame loop then overshoots or returns having run
+        // almost nothing, which makes audio arrive in bursts. The flag is
+        // sticky until `consumeFrameComplete()` takes it.
         var remaining = cycles
         while remaining > 0 {
             // A scanline is 308 dots of 4 cycles each: 240 visible, 68 blank.
@@ -169,6 +173,13 @@ final class GBAPPU {
         } else {
             dispstat &= ~0x0004
         }
+    }
+
+    /// Take the completed-frame flag, clearing it. Mirrors the DMA triggers:
+    /// the flag survives until whoever cares has acted on it.
+    func consumeFrameComplete() -> Bool {
+        defer { frameComplete = false }
+        return frameComplete
     }
 
     func consumeHBlankTrigger() -> Bool {

@@ -45,7 +45,7 @@ final class GBASystem: EmulatorCore {
             // HALTCNT and the IntrWait calls park the CPU; an asserted
             // interrupt is what releases it.
             bus.updateHaltState()
-            if bus.ppu.frameComplete { break }
+            if bus.ppu.consumeFrameComplete() { break }
         }
     }
 
