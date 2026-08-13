@@ -19,7 +19,8 @@ protocol EmulatorCore: AnyObject {
     /// Run until the next complete frame is ready.
     func runFrame()
 
-    /// The most recent frame, 0xAARRGGBB per pixel, row-major.
+    /// The most recent frame, row-major, byte order R,G,B,X per pixel (RGBA8
+    /// with an unused/undefined alpha byte).
     func withFramebuffer<T>(_ body: (UnsafeBufferPointer<UInt32>) -> T) -> T
 
     /// Replace the current input state.

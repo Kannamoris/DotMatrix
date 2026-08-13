@@ -59,8 +59,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             return nil
         }
 
+        // mGBA's 32-bit software renderer emits its native XBGR8 layout — byte
+        // order R,G,B,X — not the ARGB the header comment implies. `.rgba8Unorm`
+        // reads that layout correctly with no per-pixel conversion; the unused
+        // X byte lands in alpha, which the opaque, non-blending pipeline ignores.
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm,
+            pixelFormat: .rgba8Unorm,
             width: width,
             height: height,
             mipmapped: false

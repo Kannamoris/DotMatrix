@@ -47,8 +47,9 @@ void dm_core_destroy(DMCore* core);
 /// Run until the next complete frame.
 void dm_core_run_frame(DMCore* core);
 
-/// Finished frame, 0xAARRGGBB per pixel, row-major, 240x160.
-/// Valid until the next call to `dm_core_run_frame`.
+/// Finished frame, row-major, 240x160. mGBA's 32-bit software renderer's
+/// native format (mCOLOR_XBGR8): byte order R,G,B,X per pixel — read it as
+/// RGBA8, not ARGB8. Valid until the next call to `dm_core_run_frame`.
 const uint32_t* dm_core_framebuffer(DMCore* core);
 
 /// Replace the held buttons; a bitwise OR of DMKey.
