@@ -68,17 +68,26 @@ final class TimerUnit {
         var irqEnabled: Bool { control & 0x0040 != 0 }
         var cascade: Bool { control & 0x0004 != 0 }
 
-        var prescaler: Int {
+        /// The four prescaler settings are 1, 64, 256 and 1024 — all powers of
+        /// two, so the divide and remainder this feeds become a shift and a
+        /// mask. That matters: this runs twice per enabled timer per memory
+        /// access, and integer division there was the dominant cost.
+        var prescalerShift: Int {
             switch control & 0x3 {
-            case 0: return 1
-            case 1: return 64
-            case 2: return 256
-            default: return 1024
+            case 0: return 0
+            case 1: return 6
+            case 2: return 8
+            default: return 10
             }
         }
     }
 
-    var timers = [Timer](repeating: Timer(), count: 4)
+    // Stored in raw buffers rather than Swift arrays. `step` runs on every
+    // memory access, and at that frequency the bounds and uniqueness checks on
+    // array subscripting dominate: profiling put this unit at roughly half of
+    // total emulation time before the change.
+    private let storage: UnsafeMutablePointer<Timer>
+    private let overflowCounts: UnsafeMutablePointer<Int>
 
     /// Overflows produced by the last `step`, so the sound FIFOs can be topped
     /// up by the channels that are clocked from a timer.
@@ -86,68 +95,106 @@ final class TimerUnit {
     /// A count, not a flag: a single `step` can span several timer periods when
     /// the bus hands over a large batch of cycles, and collapsing those into one
     /// drops Direct Sound samples and starves cascaded timers.
-    private(set) var overflowedThisStep: [Int] = [0, 0, 0, 0]
+    func overflowCount(_ index: Int) -> Int { overflowCounts[index] }
+
+    /// True when the last `step` produced any overflow at all, so callers can
+    /// skip the per-timer loop in the overwhelmingly common case where none did.
+    private(set) var anyOverflow = false
+
+    /// Bit per enabled timer, maintained on control writes so `step` can bail
+    /// out without inspecting each timer.
+    private var enabledMask: UInt8 = 0
 
     private let interrupts: InterruptController
 
     init(interrupts: InterruptController) {
         self.interrupts = interrupts
+        storage = .allocate(capacity: 4)
+        storage.initialize(repeating: Timer(), count: 4)
+        overflowCounts = .allocate(capacity: 4)
+        overflowCounts.initialize(repeating: 0, count: 4)
     }
 
-    func readCounter(_ index: Int) -> UInt16 { timers[index].counter }
-    func readControl(_ index: Int) -> UInt16 { timers[index].control }
+    deinit {
+        storage.deinitialize(count: 4)
+        storage.deallocate()
+        overflowCounts.deinitialize(count: 4)
+        overflowCounts.deallocate()
+    }
+
+    /// Read-only view for save/debug paths that want the whole set.
+    var timers: [Timer] {
+        (0..<4).map { storage[$0] }
+    }
+
+    func readCounter(_ index: Int) -> UInt16 { storage[index].counter }
+    func readControl(_ index: Int) -> UInt16 { storage[index].control }
 
     func writeReload(_ index: Int, _ value: UInt16) {
-        timers[index].reload = value
+        storage[index].reload = value
     }
 
     func writeControl(_ index: Int, _ value: UInt16) {
-        let wasEnabled = timers[index].enabled
-        timers[index].control = value
+        let wasEnabled = storage[index].enabled
+        storage[index].control = value
         // A disabled-to-enabled transition reloads the counter; changing other
         // bits while already running does not.
-        if !wasEnabled && timers[index].enabled {
-            timers[index].counter = timers[index].reload
-            timers[index].accumulated = 0
+        if !wasEnabled && storage[index].enabled {
+            storage[index].counter = storage[index].reload
+            storage[index].accumulated = 0
+        }
+        if storage[index].enabled {
+            enabledMask |= UInt8(1 << index)
+        } else {
+            enabledMask &= ~UInt8(1 << index)
         }
     }
 
     func step(_ cycles: Int) {
-        for i in 0..<4 { overflowedThisStep[i] = 0 }
+        // Clearing costs four stores on a path that runs per memory access, so
+        // only do it when the previous call actually recorded something.
+        if anyOverflow {
+            overflowCounts[0] = 0; overflowCounts[1] = 0
+            overflowCounts[2] = 0; overflowCounts[3] = 0
+            anyOverflow = false
+        }
+
+        guard enabledMask != 0 else { return }
 
         for index in 0..<4 {
-            guard timers[index].enabled else { continue }
+            guard enabledMask & UInt8(1 << index) != 0 else { continue }
 
             var ticks = 0
-            if timers[index].cascade && index > 0 {
+            if storage[index].cascade && index > 0 {
                 // Cascade timers advance once per overflow of the one below,
                 // and ignore their own prescaler entirely.
-                ticks = overflowedThisStep[index - 1]
+                ticks = overflowCounts[index - 1]
             } else {
-                timers[index].accumulated += cycles
-                let prescaler = timers[index].prescaler
-                ticks = timers[index].accumulated / prescaler
-                timers[index].accumulated %= prescaler
+                storage[index].accumulated += cycles
+                let shift = storage[index].prescalerShift
+                ticks = storage[index].accumulated >> shift
+                storage[index].accumulated &= (1 << shift) - 1
             }
 
             guard ticks > 0 else { continue }
 
             var remaining = ticks
             while remaining > 0 {
-                let headroom = Int(UInt16.max - timers[index].counter) + 1
+                let headroom = Int(UInt16.max - storage[index].counter) + 1
                 if remaining >= headroom {
                     remaining -= headroom
-                    timers[index].counter = timers[index].reload
-                    overflowedThisStep[index] += 1
-                    if timers[index].irqEnabled {
+                    storage[index].counter = storage[index].reload
+                    overflowCounts[index] += 1
+                    anyOverflow = true
+                    if storage[index].irqEnabled {
                         interrupts.request(timerSource(index))
                     }
                     // A reload value of 0xFFFF would otherwise spin here.
-                    if timers[index].reload == 0xFFFF && remaining > 0 {
+                    if storage[index].reload == 0xFFFF && remaining > 0 {
                         remaining -= 1
                     }
                 } else {
-                    timers[index].counter &+= UInt16(remaining)
+                    storage[index].counter &+= UInt16(remaining)
                     remaining = 0
                 }
             }
