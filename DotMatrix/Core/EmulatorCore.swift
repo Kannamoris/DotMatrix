@@ -2,7 +2,7 @@ import Foundation
 
 /// What the UI layer needs from an emulated system.
 ///
-/// The app talks to this and never to `GBASystem` directly, so the renderer,
+/// The app talks to this and never to a concrete core directly, so the renderer,
 /// audio, input and save plumbing stay independent of the console being
 /// emulated.
 protocol EmulatorCore: AnyObject {

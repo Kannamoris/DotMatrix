@@ -64,7 +64,7 @@ final class ROMLibrary: ObservableObject {
         for url in dropped where url.pathExtension.lowercased() == "gba" {
             do {
                 let data = try Data(contentsOf: url)
-                let cartridge = try GBACartridge(data: data, requireEmerald: Self.requireEmerald)
+                let cartridge = try CartridgeHeader(data: data, requireEmerald: Self.requireEmerald)
 
                 createDirectoryIfNeeded()
                 var destination = romsDirectory
@@ -74,8 +74,7 @@ final class ROMLibrary: ObservableObject {
                 var suffix = 2
                 while fileManager.fileExists(atPath: destination.path) {
                     if let existing = try? Data(contentsOf: destination),
-                       let existingCartridge = try? GBACartridge(data: existing,
-                                                                 requireEmerald: Self.requireEmerald),
+                       let existingCartridge = try? CartridgeHeader(data: existing, requireEmerald: Self.requireEmerald),
                        existingCartridge.contentID == cartridge.contentID {
                         // Already have this one; drop the duplicate.
                         try? fileManager.removeItem(at: url)
@@ -128,7 +127,7 @@ final class ROMLibrary: ObservableObject {
         var found: [ROMEntry] = []
         for url in files where url.pathExtension.lowercased() == "gba" {
             guard let data = try? Data(contentsOf: url),
-                  let cartridge = try? GBACartridge(data: data, requireEmerald: Self.requireEmerald)
+                  let cartridge = try? CartridgeHeader(data: data, requireEmerald: Self.requireEmerald)
             else { continue }
 
             let attributes = try? url.resourceValues(forKeys: [.contentModificationDateKey])
@@ -139,7 +138,7 @@ final class ROMLibrary: ObservableObject {
                     ? url.deletingPathExtension().lastPathComponent
                     : cartridge.title,
                 gameCode: cartridge.gameCode,
-                saveType: cartridge.saveType.displayName,
+                saveType: cartridge.saveType,
                 sizeBytes: data.count,
                 importedAt: attributes?.contentModificationDate ?? .distantPast
             ))
@@ -160,7 +159,7 @@ final class ROMLibrary: ObservableObject {
         do {
             let data = try Data(contentsOf: source)
             // Parse before copying so a rejected file never enters the library.
-            let cartridge = try GBACartridge(data: data, requireEmerald: Self.requireEmerald)
+            let cartridge = try CartridgeHeader(data: data, requireEmerald: Self.requireEmerald)
 
             createDirectoryIfNeeded()
 
@@ -174,8 +173,7 @@ final class ROMLibrary: ObservableObject {
                 // Re-importing the same cartridge is a no-op rather than a
                 // duplicate.
                 if let existing = try? Data(contentsOf: destination),
-                   let existingCartridge = try? GBACartridge(data: existing,
-                                                             requireEmerald: Self.requireEmerald),
+                   let existingCartridge = try? CartridgeHeader(data: existing, requireEmerald: Self.requireEmerald),
                    existingCartridge.contentID == cartridge.contentID {
                     reload()
                     return true
@@ -200,8 +198,8 @@ final class ROMLibrary: ObservableObject {
         reload()
     }
 
-    func cartridge(for entry: ROMEntry) throws -> GBACartridge {
+    func header(for entry: ROMEntry) throws -> CartridgeHeader {
         let data = try Data(contentsOf: entry.url)
-        return try GBACartridge(data: data, requireEmerald: Self.requireEmerald)
+        return try CartridgeHeader(data: data, requireEmerald: Self.requireEmerald)
     }
 }

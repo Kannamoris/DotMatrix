@@ -131,9 +131,12 @@ struct EmulatorView: View {
 
         do {
             let data = try Data(contentsOf: entry.url)
-            let cartridge = try GBACartridge(data: data, requireEmerald: ROMLibrary.requireEmerald)
-            let core = GBASystem(cartridge: cartridge, sampleRate: AudioEngine.sampleRate)
-            let newSession = EmulatorSession(core: core, contentID: cartridge.contentID)
+            let header = try CartridgeHeader(data: data, requireEmerald: ROMLibrary.requireEmerald)
+            guard let core = MGBACore(rom: data) else {
+                loadError = "The emulator core could not load this cartridge."
+                return
+            }
+            let newSession = EmulatorSession(core: core, contentID: header.contentID)
             session = newSession
             newSession.start()
             UIApplication.shared.isIdleTimerDisabled = true

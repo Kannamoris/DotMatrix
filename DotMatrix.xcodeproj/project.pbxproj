@@ -171,6 +171,33 @@
 		A100000000000000000000E0 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"M_CORE_GBA=1",
+					"DISABLE_THREADING=1",
+					"MINIMAL_CORE=2",
+					"HAVE_STRDUP=1",
+					"HAVE_STRNDUP=1",
+					"HAVE_STRLCPY=1",
+					"HAVE_LOCALTIME_R=1",
+					"HAVE_SETLOCALE=1",
+					"HAVE_CHMOD=1",
+					"HAVE_UMASK=1",
+					"HAVE_XLOCALE=1",
+					"HAVE_SNPRINTF_L=1",
+					"HAVE_STRTOF_L=1",
+					"BUILD_STATIC=1",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/DotMatrix/mGBA/include",
+					"$(SRCROOT)/DotMatrix/mGBA",
+				);
+				SWIFT_OBJC_BRIDGING_HEADER = "DotMatrix/DotMatrix-Bridging-Header.h";
+				GCC_WARN_UNUSED_FUNCTION = NO;
+				GCC_WARN_UNUSED_VARIABLE = NO;
+				CLANG_WARN_STRICT_PROTOTYPES = NO;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
@@ -193,6 +220,33 @@
 		A100000000000000000000F0 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"M_CORE_GBA=1",
+					"DISABLE_THREADING=1",
+					"MINIMAL_CORE=2",
+					"HAVE_STRDUP=1",
+					"HAVE_STRNDUP=1",
+					"HAVE_STRLCPY=1",
+					"HAVE_LOCALTIME_R=1",
+					"HAVE_SETLOCALE=1",
+					"HAVE_CHMOD=1",
+					"HAVE_UMASK=1",
+					"HAVE_XLOCALE=1",
+					"HAVE_SNPRINTF_L=1",
+					"HAVE_STRTOF_L=1",
+					"BUILD_STATIC=1",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/DotMatrix/mGBA/include",
+					"$(SRCROOT)/DotMatrix/mGBA",
+				);
+				SWIFT_OBJC_BRIDGING_HEADER = "DotMatrix/DotMatrix-Bridging-Header.h";
+				GCC_WARN_UNUSED_FUNCTION = NO;
+				GCC_WARN_UNUSED_VARIABLE = NO;
+				CLANG_WARN_STRICT_PROTOTYPES = NO;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
