@@ -639,6 +639,13 @@ final class GBABus: ARMBus {
             return true
 
         case 0x0E:  // BgAffineSet
+            bgAffineSet(source: cpu.registers[0], destination: cpu.registers[1],
+                        count: Int(cpu.registers[2]))
+            return true
+
+        case 0x0F:  // ObjAffineSet
+            objAffineSet(source: cpu.registers[0], destination: cpu.registers[1],
+                         count: Int(cpu.registers[2]), stride: Int(cpu.registers[3]))
             return true
 
         case 0x11, 0x12:  // LZ77UnCompWram / LZ77UnCompVram
@@ -660,6 +667,107 @@ final class GBABus: ARMBus {
             // BIOS that isn't there.
             return true
         }
+    }
+
+    // MARK: Affine matrix calculation
+    //
+    // Games hand the BIOS a scale and an angle and get back the four matrix
+    // terms. Gen 3 drives every rotating or scaling sprite through this, so a
+    // no-op here leaves the matrices holding whatever was in memory and the
+    // sprites render against garbage.
+
+    /// SWI 0x0F. Source entries are 8 bytes — x ratio, y ratio, angle, pad —
+    /// and the four results are written `stride` bytes apart, which is 8 when
+    /// the destination is OAM so they land in its spare halfwords.
+    private func objAffineSet(source: UInt32, destination: UInt32, count: Int, stride: Int) {
+        guard count > 0, stride > 0 else { return }
+
+        for index in 0..<count {
+            let entry = source &+ UInt32(index * 8)
+            let ratioX = Double(Int16(bitPattern: read16Raw(entry))) / 256.0
+            let ratioY = Double(Int16(bitPattern: read16Raw(entry &+ 2))) / 256.0
+            // The angle occupies a full 16-bit turn.
+            let angle = Double(read16Raw(entry &+ 4)) / 65536.0 * 2.0 * .pi
+
+            let cosine = cos(angle)
+            let sine = sin(angle)
+
+            let pa = ratioX * cosine
+            let pb = -ratioX * sine
+            let pc = ratioY * sine
+            let pd = ratioY * cosine
+
+            var target = destination &+ UInt32(index * 4 * stride)
+            for term in [pa, pb, pc, pd] {
+                write16Raw(target, UInt16(bitPattern: fixed8_8(term)))
+                target = target &+ UInt32(stride)
+            }
+        }
+    }
+
+    /// SWI 0x0E. As above, plus a reference point: the matrix is built, then the
+    /// background origin is offset so the given texture point stays under the
+    /// given screen point.
+    private func bgAffineSet(source: UInt32, destination: UInt32, count: Int) {
+        guard count > 0 else { return }
+
+        for index in 0..<count {
+            let entry = source &+ UInt32(index * 20)
+            // Texture centre is 24.8 fixed point; screen centre is a plain s16.
+            let originX = Double(Int32(bitPattern: read32Raw(entry))) / 256.0
+            let originY = Double(Int32(bitPattern: read32Raw(entry &+ 4))) / 256.0
+            let screenX = Double(Int16(bitPattern: read16Raw(entry &+ 8)))
+            let screenY = Double(Int16(bitPattern: read16Raw(entry &+ 10)))
+            let ratioX = Double(Int16(bitPattern: read16Raw(entry &+ 12))) / 256.0
+            let ratioY = Double(Int16(bitPattern: read16Raw(entry &+ 14))) / 256.0
+            let angle = Double(read16Raw(entry &+ 16)) / 65536.0 * 2.0 * .pi
+
+            let cosine = cos(angle)
+            let sine = sin(angle)
+
+            let pa = ratioX * cosine
+            let pb = -ratioX * sine
+            let pc = ratioY * sine
+            let pd = ratioY * cosine
+
+            let startX = originX - (screenX * pa + screenY * pb)
+            let startY = originY - (screenX * pc + screenY * pd)
+
+            var target = destination &+ UInt32(index * 16)
+            for term in [pa, pb, pc, pd] {
+                write16Raw(target, UInt16(bitPattern: fixed8_8(term)))
+                target = target &+ 2
+            }
+            write32Raw(target, UInt32(bitPattern: fixed24_8(startX)))
+            write32Raw(target &+ 4, UInt32(bitPattern: fixed24_8(startY)))
+        }
+    }
+
+    private func fixed8_8(_ value: Double) -> Int16 {
+        Int16(clamping: Int(value * 256.0))
+    }
+
+    private func fixed24_8(_ value: Double) -> Int32 {
+        Int32(clamping: Int(value * 256.0))
+    }
+
+    // Untimed accessors: the BIOS routine's own memory traffic isn't modelled,
+    // and charging wait states here would drift the machine's clock.
+    private func read16Raw(_ address: UInt32) -> UInt16 {
+        UInt16(peek(address)) | (UInt16(peek(address &+ 1)) << 8)
+    }
+
+    private func read32Raw(_ address: UInt32) -> UInt32 {
+        UInt32(read16Raw(address)) | (UInt32(read16Raw(address &+ 2)) << 16)
+    }
+
+    private func write16Raw(_ address: UInt32, _ value: UInt16) {
+        writeHalf(address & ~1, value)
+    }
+
+    private func write32Raw(_ address: UInt32, _ value: UInt32) {
+        write16Raw(address, UInt16(value & 0xFFFF))
+        write16Raw(address &+ 2, UInt16(value >> 16))
     }
 
     private func registerRAMReset(flags: UInt32) {
