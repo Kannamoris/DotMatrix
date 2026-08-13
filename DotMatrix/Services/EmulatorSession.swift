@@ -381,45 +381,55 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         return "BUILD v\(version) (\(build)) \(config)  core mGBA  rom \(core.displayTitle)"
     }
 
-    /// TEMPORARY scaffolding for locating gBattlerControllerFuncs, the RAM
-    /// array that would tell BattleView which native menu is showing (action
-    /// select vs move select) — no verified address for it exists anywhere
-    /// public, unlike everything else the battle UI needs. Since the exact
-    /// pointer *values* the game stores there while each menu is up ARE known
-    /// (from EmeraldRecomp's byte-matched symbol table: HandleInputChooseAction
-    /// and HandleInputChooseMove, +1 for the Thumb-mode bit a stored callback
-    /// carries), this searches IWRAM for them directly rather than guessing an
-    /// address. It also probes for HandleTurnActionSelectionState, whose home
-    /// (gBattleMainFunc, 0x03005D04) is already confirmed — if that one
-    /// doesn't show up at the expected address, the whole approach (Thumb bit,
-    /// IWRAM assumption) is wrong and the other two hits shouldn't be trusted
-    /// either. Delete this once the real address is confirmed and wired in.
+    /// TEMPORARY scaffolding, round 2. Round 1 (IWRAM scan for
+    /// HandleInputChooseAction / HandleInputChooseMove) confirmed
+    /// gBattlerControllerFuncs[0] = 0x03005D60 — that's done and gets wired in
+    /// properly once this round finishes.
+    ///
+    /// What's left: a battle can legitimately have gBattleTypeFlags == 0 (a
+    /// plain wild encounter sets no flags — confirmed straight from
+    /// battle_setup.c), so it can't tell "no battle" from "wild battle" and
+    /// isn't safe to use for BattleState.isActive. The reliable signal for
+    /// "which top-level mode is the game in at all" is gMain.callback2, which
+    /// is BattleMainCB2 throughout an active battle and something else (an
+    /// overworld callback) otherwise — but gMain's address isn't public
+    /// either. Same fix as round 1: scan for the known callback *values*
+    /// instead of guessing gMain's address. This scans EWRAM (where big
+    /// global structs like gMain live) for BattleMainCB2/CB2_InitBattle while
+    /// a battle should be active, and CB2_Overworld/CB2_OverworldBasic while
+    /// walking around outside one — comparing the two tells us both gMain's
+    /// address and which callback is the right one to check.
     private static let phaseProbeTargets: [(name: String, value: UInt32)] = [
-        ("calib=BattleMainFunc", 0x0803BE75),
-        ("action=ChooseAction", 0x08057589),
-        ("move=ChooseMove", 0x08057BFD),
+        ("battle=BattleMainCB2", 0x08038421),
+        ("battle=CB2_InitBattle", 0x08036761),
+        ("overworld=CB2_Overworld", 0x08085E5D),
+        ("overworld=CB2_OverworldBasic", 0x08085E51),
     ]
 
     private func formatPhaseProbe() -> String {
-        let iwramBase: UInt32 = 0x0300_0000
-        let iwram = core.readMemory(iwramBase, count: 0x8000)
-        guard iwram.count == 0x8000 else { return "SCAN (iwram read failed)" }
-
         var hits: [String] = []
-        for (name, target) in Self.phaseProbeTargets {
-            var offset = 0
-            while offset + 4 <= iwram.count {
-                let word = UInt32(iwram[offset])
-                    | (UInt32(iwram[offset + 1]) << 8)
-                    | (UInt32(iwram[offset + 2]) << 16)
-                    | (UInt32(iwram[offset + 3]) << 24)
-                if word == target {
-                    hits.append(String(format: "%@@%08X", name, iwramBase + UInt32(offset)))
+        // EWRAM is 256KB; readMemory caps at 64KB per call, so this covers it
+        // in four chunks.
+        let chunkSize = 0x10000
+        for chunkIndex in 0..<4 {
+            let base = UInt32(0x0200_0000 + chunkIndex * chunkSize)
+            let chunk = core.readMemory(base, count: chunkSize)
+            guard chunk.count == chunkSize else { continue }
+            for (name, target) in Self.phaseProbeTargets {
+                var offset = 0
+                while offset + 4 <= chunk.count {
+                    let word = UInt32(chunk[offset])
+                        | (UInt32(chunk[offset + 1]) << 8)
+                        | (UInt32(chunk[offset + 2]) << 16)
+                        | (UInt32(chunk[offset + 3]) << 24)
+                    if word == target {
+                        hits.append(String(format: "%@@%08X", name, base + UInt32(offset)))
+                    }
+                    offset += 4
                 }
-                offset += 4
             }
         }
-        return "SCAN " + (hits.isEmpty ? "no matches in IWRAM" : hits.joined(separator: "  "))
+        return "SCAN " + (hits.isEmpty ? "no matches in EWRAM" : hits.joined(separator: "  "))
     }
 
     /// Read the video, timer, DMA and interrupt registers straight out of
