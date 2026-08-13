@@ -82,6 +82,14 @@ final class GBASystem: EmulatorCore {
 
     func markBatteryFlushed() { cartridge.backup.isDirty = false }
 
+    /// The clock's offset from host time, persisted next to the save so the
+    /// game's sense of time survives the app closing.
+    var auxiliarySaveData: [String: Int] { bus.gpio.saveState }
+
+    func restoreAuxiliarySaveData(_ data: [String: Int]) {
+        bus.gpio.restore(data)
+    }
+
     func readMemory(_ address: UInt32, count: Int) -> [UInt8] {
         guard count > 0, count <= 0x10000 else { return [] }
         var result = [UInt8](repeating: 0, count: count)

@@ -11,6 +11,8 @@ final class GBABus: ARMBus {
     private var iwram = [UInt8](repeating: 0, count: 0x8000)    // 32 KB
 
     let cartridge: GBACartridge
+    /// Cartridge GPIO port and the real-time clock behind it.
+    let gpio = CartridgeGPIO()
     let ppu: GBAPPU
     let apu: GBAAPU
     let interrupts = InterruptController()
@@ -295,6 +297,13 @@ final class GBABus: ARMBus {
             return ppu.readOAM(address & 0x3FF)
         case 0x8, 0x9, 0xA, 0xB, 0xC, 0xD:
             let offset = Int(address & 0x01FF_FFFF)
+            // The GPIO port overlays the ROM at 0xC4-0xC9, but only while the
+            // control register enables it. Otherwise these addresses must read
+            // back as ordinary cartridge data.
+            if gpio.readable, offset >= 0xC4, offset <= 0xC9 {
+                let value = gpio.read(UInt32(offset) & ~1)
+                return offset & 1 == 0 ? UInt8(value & 0xFF) : UInt8(value >> 8)
+            }
             return offset < cartridge.rom.count ? cartridge.rom[offset] : 0
         case 0xE, 0xF:
             return cartridge.backup.read(address & 0xFFFF)
@@ -381,6 +390,12 @@ final class GBABus: ARMBus {
             ppu.writeVRAM16(vramOffset(address) & ~1, value)
         case 0x7:
             ppu.writeOAM16(address & 0x3FE, value)
+        case 0x8, 0x9, 0xA, 0xB, 0xC, 0xD:
+            // Writes to the ROM region go nowhere except the GPIO port.
+            let offset = address & 0x01FF_FFFF
+            if offset >= 0xC4, offset <= 0xC9 {
+                gpio.write(offset & ~1, value)
+            }
         case 0xE, 0xF:
             cartridge.backup.write(address & 0xFFFF, UInt8(value & 0xFF))
         default:
