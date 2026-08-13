@@ -7,6 +7,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("smoothing") var smoothing: Bool = false
     @AppStorage("haptics") var haptics: Bool = true
     @AppStorage("showFPS") var showFPS: Bool = false
+    /// Overlays live PPU register state, for diagnosing misrendered frames.
+    @AppStorage("showVideoDiagnostics") var showVideoDiagnostics: Bool = false
     /// Native-UI battle panel beside the game viewport.
     @AppStorage("battleOverlay") var battleOverlay: Bool = true
 }
@@ -39,8 +41,13 @@ struct SettingsView: View {
                     Toggle("Haptic feedback", isOn: $settings.haptics)
                 }
 
-                Section("Diagnostics") {
+                Section {
                     Toggle("Show frame rate", isOn: $settings.showFPS)
+                    Toggle("Show video registers", isOn: $settings.showVideoDiagnostics)
+                } header: {
+                    Text("Diagnostics")
+                } footer: {
+                    Text("Video registers overlay the PPU's live configuration, so a screenshot of a wrong-looking frame carries the state that produced it.")
                 }
 
                 Section {

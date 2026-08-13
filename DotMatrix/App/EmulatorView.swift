@@ -158,18 +158,30 @@ private struct RunningSessionView: View {
                 pauseOverlay
             }
 
-            if settings.showFPS {
-                VStack {
+            VStack(alignment: .leading, spacing: 4) {
+                if settings.showFPS {
                     HStack {
                         Spacer()
                         Text(String(format: "%.1f fps", session.measuredFPS))
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.white.opacity(0.6))
-                            .padding(6)
                     }
-                    Spacer()
                 }
+                if settings.showVideoDiagnostics, !session.videoDiagnostics.isEmpty {
+                    Text(session.videoDiagnostics)
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.green.opacity(0.85))
+                        .padding(6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(.black.opacity(0.65))
+                        )
+                        .textSelection(.enabled)
+                }
+                Spacer()
             }
+            .padding(8)
+            .allowsHitTesting(false)
         }
     }
 

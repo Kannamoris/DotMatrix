@@ -15,6 +15,11 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var isPaused = false
     @Published private(set) var measuredFPS: Double = 0
 
+    /// Live PPU register state, refreshed a few times a second. Exists so a
+    /// screenshot of a misrendered frame carries the hardware configuration
+    /// that produced it, instead of leaving the cause to be guessed at.
+    @Published private(set) var videoDiagnostics: String = ""
+
     let displayTitle: String
     let contentID: String
     let screenWidth: Int
@@ -223,8 +228,12 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                 let fps = Double(framesThisSecond) / (now - secondMarker)
                 framesThisSecond = 0
                 secondMarker = now
+                // Sampled on this thread, which owns the core, and published
+                // to the main queue.
+                let diagnostics = formatVideoDiagnostics()
                 DispatchQueue.main.async { [weak self] in
                     self?.measuredFPS = fps
+                    self?.videoDiagnostics = diagnostics
                 }
             }
 
@@ -238,6 +247,58 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
 
         // Final write on the way out, in case we were stopped mid-frame.
         saves.flushIfNeeded(core, contentID: contentID)
+    }
+
+    /// Read the video registers straight out of emulated I/O space and lay them
+    /// out in the terms the renderer actually branches on.
+    private func formatVideoDiagnostics() -> String {
+        let io = core.readMemory(0x0400_0000, count: 0x58)
+        guard io.count >= 0x58 else { return "" }
+
+        func half(_ offset: Int) -> UInt16 {
+            UInt16(io[offset]) | (UInt16(io[offset + 1]) << 8)
+        }
+        func hex(_ v: UInt16) -> String { String(format: "%04X", v) }
+
+        let dispcnt = half(0x00)
+        let mode = dispcnt & 0x7
+        var layers: [String] = []
+        for bg in 0..<4 where dispcnt & (0x0100 << UInt16(bg)) != 0 {
+            layers.append("BG\(bg)")
+        }
+        if dispcnt & 0x1000 != 0 { layers.append("OBJ") }
+
+        var flags: [String] = []
+        if dispcnt & 0x0080 != 0 { flags.append("FORCED-BLANK") }
+        if dispcnt & 0x0040 != 0 { flags.append("OBJ-1D") } else { flags.append("OBJ-2D") }
+        if dispcnt & 0x2000 != 0 { flags.append("WIN0") }
+        if dispcnt & 0x4000 != 0 { flags.append("WIN1") }
+        if dispcnt & 0x8000 != 0 { flags.append("OBJWIN") }
+
+        let blend = half(0x50)
+        let effect = ["none", "alpha", "brighten", "darken"][Int((blend >> 6) & 0x3)]
+
+        var lines: [String] = []
+        lines.append("DISPCNT \(hex(dispcnt))  mode \(mode)")
+        lines.append("layers  \(layers.isEmpty ? "none" : layers.joined(separator: " "))")
+        lines.append("flags   \(flags.joined(separator: " "))")
+
+        for bg in 0..<4 {
+            let control = half(0x08 + bg * 2)
+            let priority = control & 0x3
+            let charBase = (control >> 2) & 0x3
+            let screenBase = (control >> 8) & 0x1F
+            let depth = control & 0x0080 != 0 ? "256c" : "16c"
+            let size = (control >> 14) & 0x3
+            let mosaic = control & 0x0040 != 0 ? " mos" : ""
+            lines.append("BG\(bg) \(hex(control)) pri\(priority) cb\(charBase) sb\(screenBase) \(depth) sz\(size)\(mosaic)")
+        }
+
+        lines.append("BLD \(hex(blend)) \(effect) EVA/EVB \(hex(half(0x52))) EVY \(hex(half(0x54)))")
+        lines.append("WIN in \(hex(half(0x48))) out \(hex(half(0x4A))) MOSAIC \(hex(half(0x4C)))")
+        lines.append("SCROLL \(hex(half(0x10)))/\(hex(half(0x12))) \(hex(half(0x14)))/\(hex(half(0x16)))")
+
+        return lines.joined(separator: "\n")
     }
 
     private func publishFrame() {
