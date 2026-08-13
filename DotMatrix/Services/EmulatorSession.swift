@@ -213,6 +213,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         // Isolates the core's own cost from pacing sleeps and frame handoff,
         // so a slow device and a slow core don't look the same in the overlay.
         var runFrameSeconds: Double = 0
+        var publishSeconds: Double = 0
 
         // Fallback pacing for when audio is unavailable (the engine failed to
         // start, or output is routed somewhere that stalled) — otherwise the
@@ -279,8 +280,10 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
             core.setButtons(state.buttons)
             let frameStart = CFAbsoluteTimeGetCurrent()
             core.runFrame()
-            runFrameSeconds += CFAbsoluteTimeGetCurrent() - frameStart
+            let runFrameEnd = CFAbsoluteTimeGetCurrent()
+            runFrameSeconds += runFrameEnd - frameStart
             publishFrame()
+            publishSeconds += CFAbsoluteTimeGetCurrent() - runFrameEnd
 
             framesThisSecond += 1
             let now = CFAbsoluteTimeGetCurrent()
@@ -288,15 +291,22 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
             if now - secondMarker >= 1.0 {
                 let fps = Double(framesThisSecond) / (now - secondMarker)
                 let avgRunFrameMs = runFrameSeconds / Double(framesThisSecond) * 1000
+                let avgPublishMs = publishSeconds / Double(framesThisSecond) * 1000
                 let budgetMs = 1000.0 / core.refreshRate
                 framesThisSecond = 0
                 runFrameSeconds = 0
+                publishSeconds = 0
                 secondMarker = now
                 // Sampled on this thread, which owns the core, and published
                 // to the main queue.
-                let perf = String(format: "PERF runFrame %.2fms/frame  budget %.2fms  fps %.1f",
-                                   avgRunFrameMs, budgetMs, fps)
-                let diagnostics = perf + "\n" + formatVideoDiagnostics()
+                let perf = String(format: "PERF runFrame %.2fms  publish %.2fms  budget %.2fms  fps %.1f",
+                                   avgRunFrameMs, avgPublishMs, budgetMs, fps)
+                let audioLine = String(format: "AUDIO queued %d  target %d  underruns %d  rate %.0fHz",
+                                        core.queuedAudioFrameCount, targetQueuedFrames,
+                                        audio.underrunCount, AudioEngine.sampleRate)
+                audio.resetUnderrunCount()
+                let diagnostics = [perf, audioLine, formatBuildDiagnostics(), formatVideoDiagnostics()]
+                    .joined(separator: "\n")
                 let input = formatInputDiagnostics(state.buttons, presses: state.pressCount)
                 DispatchQueue.main.async { [weak self] in
                     self?.measuredFPS = fps
@@ -317,11 +327,28 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         saves.flushIfNeeded(core, contentID: contentID)
     }
 
-    /// Read the video registers straight out of emulated I/O space and lay them
-    /// out in the terms the renderer actually branches on.
+    /// Static build identity, so a screenshot carries which binary produced it
+    /// without having to ask what was installed at the time.
+    private func formatBuildDiagnostics() -> String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        #if DEBUG
+        let config = "Debug"
+        #else
+        let config = "Release"
+        #endif
+        return "BUILD v\(version) (\(build)) \(config)  core mGBA  rom \(core.displayTitle)"
+    }
+
+    /// Read the video, timer, DMA and interrupt registers straight out of
+    /// emulated I/O space and lay them out in the terms the hardware and the
+    /// renderer actually branch on — everything short of a full memory dump
+    /// that's ever mattered while chasing a rendering or timing bug.
     private func formatVideoDiagnostics() -> String {
-        let io = core.readMemory(0x0400_0000, count: 0x58)
-        guard io.count >= 0x58 else { return "" }
+        let size = 0x302
+        let io = core.readMemory(0x0400_0000, count: size)
+        guard io.count >= size else { return "" }
 
         func half(_ offset: Int) -> UInt16 {
             UInt16(io[offset]) | (UInt16(io[offset + 1]) << 8)
@@ -329,6 +356,8 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         func hex(_ v: UInt16) -> String { String(format: "%04X", v) }
 
         let dispcnt = half(0x00)
+        let dispstat = half(0x04)
+        let vcount = half(0x06) & 0xFF
         let mode = dispcnt & 0x7
         var layers: [String] = []
         for bg in 0..<4 where dispcnt & (0x0100 << UInt16(bg)) != 0 {
@@ -347,7 +376,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         let effect = ["none", "alpha", "brighten", "darken"][Int((blend >> 6) & 0x3)]
 
         var lines: [String] = []
-        lines.append("DISPCNT \(hex(dispcnt))  mode \(mode)")
+        lines.append("DISPCNT \(hex(dispcnt))  mode \(mode)  VCOUNT \(vcount)  DISPSTAT \(hex(dispstat))")
         lines.append("layers  \(layers.isEmpty ? "none" : layers.joined(separator: " "))")
         lines.append("flags   \(flags.joined(separator: " "))")
 
@@ -359,12 +388,44 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
             let depth = control & 0x0080 != 0 ? "256c" : "16c"
             let size = (control >> 14) & 0x3
             let mosaic = control & 0x0040 != 0 ? " mos" : ""
-            lines.append("BG\(bg) \(hex(control)) pri\(priority) cb\(charBase) sb\(screenBase) \(depth) sz\(size)\(mosaic)")
+            let hofs = half(0x10 + bg * 4)
+            let vofs = half(0x12 + bg * 4)
+            lines.append("BG\(bg) \(hex(control)) pri\(priority) cb\(charBase) sb\(screenBase) \(depth) sz\(size)\(mosaic) scroll \(hex(hofs))/\(hex(vofs))")
         }
 
         lines.append("BLD \(hex(blend)) \(effect) EVA/EVB \(hex(half(0x52))) EVY \(hex(half(0x54)))")
         lines.append("WIN in \(hex(half(0x48))) out \(hex(half(0x4A))) MOSAIC \(hex(half(0x4C)))")
-        lines.append("SCROLL \(hex(half(0x10)))/\(hex(half(0x12))) \(hex(half(0x14)))/\(hex(half(0x16)))")
+
+        // Timer control: bit7 enable, bits0-1 prescaler, bit2 cascade, bit6 IRQ.
+        var timers: [String] = []
+        for t in 0..<4 {
+            let base = 0x100 + t * 4
+            let ctrl = half(base + 2)
+            guard ctrl & 0x80 != 0 else { continue }
+            let prescaler = [1, 64, 256, 1024][Int(ctrl & 0x3)]
+            let cascade = ctrl & 0x4 != 0 ? " casc" : ""
+            let irq = ctrl & 0x40 != 0 ? " irq" : ""
+            timers.append("T\(t)=\(hex(half(base)))/\(prescaler)\(cascade)\(irq)")
+        }
+        lines.append("TIMERS  \(timers.isEmpty ? "none active" : timers.joined(separator: " "))")
+
+        // DMA control: bit15 enable, bits12-13 start timing, bit9 repeat.
+        var dmas: [String] = []
+        for d in 0..<4 {
+            let base = 0x0B0 + d * 0xC
+            let cntH = half(base + 0xA)
+            guard cntH & 0x8000 != 0 else { continue }
+            let count = half(base + 0x8)
+            let timing = ["imm", "vblank", "hblank", "special"][Int((cntH >> 12) & 0x3)]
+            let repeatFlag = cntH & 0x0200 != 0 ? " rep" : ""
+            dmas.append("D\(d)=\(count)@\(timing)\(repeatFlag)")
+        }
+        lines.append("DMA     \(dmas.isEmpty ? "none active" : dmas.joined(separator: " "))")
+
+        let ie = half(0x200)
+        let irqFlags = half(0x202)
+        let ime = half(0x208) & 0x1
+        lines.append("IRQ IE \(hex(ie))  IF \(hex(irqFlags))  IME \(ime)")
 
         return lines.joined(separator: "\n")
     }
