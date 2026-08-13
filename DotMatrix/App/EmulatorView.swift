@@ -168,7 +168,7 @@ private struct RunningSessionView: View {
                     }
                 }
                 if settings.showVideoDiagnostics, !session.videoDiagnostics.isEmpty {
-                    Text(session.videoDiagnostics)
+                    Text(session.inputDiagnostics + "\n" + session.videoDiagnostics)
                         .font(.system(size: 9, weight: .regular, design: .monospaced))
                         .foregroundStyle(.green.opacity(0.85))
                         .padding(6)

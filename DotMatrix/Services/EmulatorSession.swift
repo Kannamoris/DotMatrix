@@ -20,6 +20,11 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     /// that produced it, instead of leaving the cause to be guessed at.
     @Published private(set) var videoDiagnostics: String = ""
 
+    /// What the core is currently being handed, and how many presses have
+    /// arrived. If a tap never moves these, input is not reaching emulation —
+    /// which looks identical to the game being stuck.
+    @Published private(set) var inputDiagnostics: String = ""
+
     let displayTitle: String
     let contentID: String
     let screenWidth: Int
@@ -37,6 +42,8 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         var audioActive = false
         var forceFlushRequested = false
         var buttons = GBAButtons()
+        /// Counts transitions from nothing-held to something-held.
+        var pressCount = 0
     }
 
     private let control = OSAllocatedUnfairLock(initialState: ControlState())
@@ -152,7 +159,10 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     // MARK: Input
 
     func setButtons(_ buttons: GBAButtons) {
-        control.withLock { $0.buttons = buttons }
+        control.withLock {
+            if $0.buttons.isEmpty && !buttons.isEmpty { $0.pressCount += 1 }
+            $0.buttons = buttons
+        }
     }
 
     // MARK: Frame handoff
@@ -231,9 +241,11 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                 // Sampled on this thread, which owns the core, and published
                 // to the main queue.
                 let diagnostics = formatVideoDiagnostics()
+                let input = formatInputDiagnostics(state.buttons, presses: state.pressCount)
                 DispatchQueue.main.async { [weak self] in
                     self?.measuredFPS = fps
                     self?.videoDiagnostics = diagnostics
+                    self?.inputDiagnostics = input
                 }
             }
 
@@ -299,6 +311,20 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         lines.append("SCROLL \(hex(half(0x10)))/\(hex(half(0x12))) \(hex(half(0x14)))/\(hex(half(0x16)))")
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Render the held buttons the way the hardware register sees them.
+    private func formatInputDiagnostics(_ buttons: GBAButtons, presses: Int) -> String {
+        let names: [(GBAButtons, String)] = [
+            (.a, "A"), (.b, "B"), (.select, "SEL"), (.start, "STA"),
+            (.right, "R"), (.left, "L"), (.up, "U"), (.down, "D"),
+            (.r, "R1"), (.l, "L1"),
+        ]
+        let held = names.filter { buttons.contains($0.0) }.map(\.1)
+        let keyinput = ~buttons.rawValue & 0x03FF
+        return String(format: "KEYS  %@  KEYINPUT=%03X presses=%d",
+                      held.isEmpty ? "(none)" : held.joined(separator: "+"),
+                      keyinput, presses)
     }
 
     private func publishFrame() {
