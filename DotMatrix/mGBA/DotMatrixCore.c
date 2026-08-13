@@ -5,7 +5,7 @@
 #include "DotMatrixCore.h"
 
 #include <mgba/core/core.h>
-#include <mgba/core/blip_buf.h>
+#include <mgba-util/audio-buffer.h>
 #include <mgba/gba/core.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba-util/vfs.h>
@@ -70,10 +70,6 @@ DMCore* dm_core_create(const uint8_t* rom, size_t romSize) {
     wrapper->core->setVideoBuffer(wrapper->core, wrapper->video, width);
 
     wrapper->core->setAudioBufferSize(wrapper->core, DM_AUDIO_BUFFER);
-    blip_set_rates(wrapper->core->getAudioChannel(wrapper->core, 0),
-                   wrapper->core->frequency(wrapper->core), DM_AUDIO_RATE);
-    blip_set_rates(wrapper->core->getAudioChannel(wrapper->core, 1),
-                   wrapper->core->frequency(wrapper->core), DM_AUDIO_RATE);
 
     wrapper->audioScratch = calloc(DM_AUDIO_BUFFER * 2, sizeof(int16_t));
 
@@ -124,10 +120,12 @@ size_t dm_core_read_audio(DMCore* wrapper, float* left, float* right, size_t fra
         return 0;
     }
 
-    blip_t* blipLeft = wrapper->core->getAudioChannel(wrapper->core, 0);
-    blip_t* blipRight = wrapper->core->getAudioChannel(wrapper->core, 1);
+    struct mAudioBuffer* buffer = wrapper->core->getAudioBuffer(wrapper->core);
+    if (!buffer) {
+        return 0;
+    }
 
-    size_t available = (size_t)blip_samples_avail(blipLeft);
+    size_t available = mAudioBufferAvailable(buffer);
     size_t wanted = available < frames ? available : frames;
     if (wanted > DM_AUDIO_BUFFER) {
         wanted = DM_AUDIO_BUFFER;
@@ -136,30 +134,31 @@ size_t dm_core_read_audio(DMCore* wrapper, float* left, float* right, size_t fra
         return 0;
     }
 
-    blip_read_samples(blipLeft, wrapper->audioScratch, (int)wanted, 0);
-    for (size_t i = 0; i < wanted; ++i) {
-        left[i] = wrapper->audioScratch[i] / 32768.0f;
+    // The buffer hands back interleaved stereo; the caller wants planar.
+    size_t got = mAudioBufferRead(buffer, wrapper->audioScratch, wanted);
+    for (size_t i = 0; i < got; ++i) {
+        left[i] = wrapper->audioScratch[i * 2] / 32768.0f;
+        right[i] = wrapper->audioScratch[i * 2 + 1] / 32768.0f;
     }
-    blip_read_samples(blipRight, wrapper->audioScratch, (int)wanted, 0);
-    for (size_t i = 0; i < wanted; ++i) {
-        right[i] = wrapper->audioScratch[i] / 32768.0f;
-    }
-    return wanted;
+    return got;
 }
 
 void dm_core_flush_audio(DMCore* wrapper) {
     if (!wrapper || !wrapper->core) {
         return;
     }
-    blip_clear(wrapper->core->getAudioChannel(wrapper->core, 0));
-    blip_clear(wrapper->core->getAudioChannel(wrapper->core, 1));
+    struct mAudioBuffer* buffer = wrapper->core->getAudioBuffer(wrapper->core);
+    if (buffer) {
+        mAudioBufferClear(buffer);
+    }
 }
 
 size_t dm_core_queued_audio(DMCore* wrapper) {
     if (!wrapper || !wrapper->core) {
         return 0;
     }
-    return (size_t)blip_samples_avail(wrapper->core->getAudioChannel(wrapper->core, 0));
+    struct mAudioBuffer* buffer = wrapper->core->getAudioBuffer(wrapper->core);
+    return buffer ? mAudioBufferAvailable(buffer) : 0;
 }
 
 void dm_core_read_memory(DMCore* wrapper, uint32_t address, uint8_t* out, size_t count) {
