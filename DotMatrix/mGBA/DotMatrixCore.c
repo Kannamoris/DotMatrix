@@ -5,6 +5,7 @@
 #include "DotMatrixCore.h"
 
 #include <mgba/core/core.h>
+#include <mgba/core/interface.h>
 #include <mgba-util/audio-buffer.h>
 #include <mgba/gba/core.h>
 #include <mgba/internal/gba/gba.h>
@@ -268,22 +269,33 @@ bool dm_core_state_load(DMCore* wrapper, const uint8_t* bytes, size_t count) {
     return wrapper->core->loadState(wrapper->core, bytes);
 }
 
+// Title and code both come from one header query.
+static void dm_game_info(DMCore* wrapper, struct mGameInfo* info) {
+    memset(info, 0, sizeof(*info));
+    if (wrapper && wrapper->core && wrapper->core->getGameInfo) {
+        wrapper->core->getGameInfo(wrapper->core, info);
+    }
+}
+
 void dm_core_game_title(DMCore* wrapper, char* out, size_t capacity) {
-    if (!wrapper || !wrapper->core || !out || capacity == 0) {
+    if (!out || capacity == 0) {
         return;
     }
-    char title[17] = {0};
-    wrapper->core->getGameTitle(wrapper->core, title);
-    strncpy(out, title, capacity - 1);
-    out[capacity - 1] = '\0';
+    struct mGameInfo info;
+    dm_game_info(wrapper, &info);
+    // The fields are fixed-width and not guaranteed to be terminated.
+    size_t limit = capacity - 1 < sizeof(info.title) ? capacity - 1 : sizeof(info.title);
+    memcpy(out, info.title, limit);
+    out[limit] = '\0';
 }
 
 void dm_core_game_code(DMCore* wrapper, char* out, size_t capacity) {
-    if (!wrapper || !wrapper->core || !out || capacity == 0) {
+    if (!out || capacity == 0) {
         return;
     }
-    char code[9] = {0};
-    wrapper->core->getGameCode(wrapper->core, code);
-    strncpy(out, code, capacity - 1);
-    out[capacity - 1] = '\0';
+    struct mGameInfo info;
+    dm_game_info(wrapper, &info);
+    size_t limit = capacity - 1 < sizeof(info.code) ? capacity - 1 : sizeof(info.code);
+    memcpy(out, info.code, limit);
+    out[limit] = '\0';
 }
