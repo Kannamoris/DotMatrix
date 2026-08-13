@@ -345,7 +345,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                                         core.queuedAudioFrameCount, targetQueuedFrames,
                                         audio.underrunCount, currentAudioRate)
                 audio.resetUnderrunCount()
-                let diagnostics = [perf, audioLine, formatBuildDiagnostics(), formatVideoDiagnostics()]
+                let diagnostics = [perf, audioLine, formatBuildDiagnostics(), formatPhaseProbe(), formatVideoDiagnostics()]
                     .joined(separator: "\n")
                 let input = formatInputDiagnostics(state.buttons, presses: state.pressCount)
                 DispatchQueue.main.async { [weak self] in
@@ -379,6 +379,47 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         let config = "Release"
         #endif
         return "BUILD v\(version) (\(build)) \(config)  core mGBA  rom \(core.displayTitle)"
+    }
+
+    /// TEMPORARY scaffolding for locating gBattlerControllerFuncs, the RAM
+    /// array that would tell BattleView which native menu is showing (action
+    /// select vs move select) — no verified address for it exists anywhere
+    /// public, unlike everything else the battle UI needs. Since the exact
+    /// pointer *values* the game stores there while each menu is up ARE known
+    /// (from EmeraldRecomp's byte-matched symbol table: HandleInputChooseAction
+    /// and HandleInputChooseMove, +1 for the Thumb-mode bit a stored callback
+    /// carries), this searches IWRAM for them directly rather than guessing an
+    /// address. It also probes for HandleTurnActionSelectionState, whose home
+    /// (gBattleMainFunc, 0x03005D04) is already confirmed — if that one
+    /// doesn't show up at the expected address, the whole approach (Thumb bit,
+    /// IWRAM assumption) is wrong and the other two hits shouldn't be trusted
+    /// either. Delete this once the real address is confirmed and wired in.
+    private static let phaseProbeTargets: [(name: String, value: UInt32)] = [
+        ("calib=BattleMainFunc", 0x0803BE75),
+        ("action=ChooseAction", 0x08057589),
+        ("move=ChooseMove", 0x08057BFD),
+    ]
+
+    private func formatPhaseProbe() -> String {
+        let iwramBase: UInt32 = 0x0300_0000
+        let iwram = core.readMemory(iwramBase, count: 0x8000)
+        guard iwram.count == 0x8000 else { return "SCAN (iwram read failed)" }
+
+        var hits: [String] = []
+        for (name, target) in Self.phaseProbeTargets {
+            var offset = 0
+            while offset + 4 <= iwram.count {
+                let word = UInt32(iwram[offset])
+                    | (UInt32(iwram[offset + 1]) << 8)
+                    | (UInt32(iwram[offset + 2]) << 16)
+                    | (UInt32(iwram[offset + 3]) << 24)
+                if word == target {
+                    hits.append(String(format: "%@@%08X", name, iwramBase + UInt32(offset)))
+                }
+                offset += 4
+            }
+        }
+        return "SCAN " + (hits.isEmpty ? "no matches in IWRAM" : hits.joined(separator: "  "))
     }
 
     /// Read the video, timer, DMA and interrupt registers straight out of
