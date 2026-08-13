@@ -162,6 +162,13 @@ size_t dm_core_queued_audio(DMCore* wrapper) {
     return buffer ? mAudioBufferAvailable(buffer) : 0;
 }
 
+unsigned dm_core_audio_rate(DMCore* wrapper) {
+    if (!wrapper || !wrapper->core || !wrapper->core->audioSampleRate) {
+        return 0;
+    }
+    return wrapper->core->audioSampleRate(wrapper->core);
+}
+
 void dm_core_read_memory(DMCore* wrapper, uint32_t address, uint8_t* out, size_t count) {
     if (!wrapper || !wrapper->core || !out) {
         return;

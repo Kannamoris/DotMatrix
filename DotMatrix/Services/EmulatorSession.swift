@@ -88,7 +88,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     func start() {
         guard !isRunning else { return }
 
-        audio.start()
+        audio.start(sampleRate: initialAudioSampleRate())
         control.withLock {
             $0.running = true
             $0.paused = false
@@ -125,12 +125,19 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     func resume() {
         guard isRunning, isPaused else { return }
         core.flushAudio()
-        audio.start()
+        audio.start(sampleRate: initialAudioSampleRate())
         control.withLock {
             $0.paused = false
             $0.audioActive = audio.isRunning
         }
         isPaused = false
+    }
+
+    /// The core's real output rate, once the game has configured its sound
+    /// hardware — unknown any earlier than that, hence the fallback.
+    private func initialAudioSampleRate() -> Double {
+        let rate = Double(core.audioSampleRate)
+        return rate > 0 ? rate : AudioEngine.fallbackSampleRate
     }
 
     @MainActor
@@ -203,9 +210,16 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     private func emulationLoop() {
         defer { threadExited.signal() }
 
+        // The core's actual output rate — not fixed, see `audioSampleRate` —
+        // determines both how much a "queued frame" is worth in real time and
+        // how fast production has to run to keep the buffer fed. Getting this
+        // wrong doesn't mis-time playback so much as silently cap overall
+        // emulation speed, since the pacer below throttles production to
+        // match a drain rate that was never the real one.
+        var currentAudioRate = initialAudioSampleRate()
         // Keep roughly 30 ms of audio queued: enough to absorb a scheduling
         // hiccup, short enough that input still feels immediate.
-        let targetQueuedFrames = Int(AudioEngine.sampleRate * 0.030)
+        var targetQueuedFrames = Int(currentAudioRate * 0.030)
 
         var framesThisSecond = 0
         var secondMarker = CFAbsoluteTimeGetCurrent()
@@ -262,7 +276,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                         // sleep pays real scheduler overhead, and this was
                         // looping ~15-20 times per emulated frame — that
                         // overhead, not the core, was the missing speed.
-                        let waitSeconds = min(Double(excess) / AudioEngine.sampleRate, 0.020)
+                        let waitSeconds = min(Double(excess) / currentAudioRate, 0.020)
                         Thread.sleep(forTimeInterval: waitSeconds)
                         continue
                     }
@@ -297,13 +311,31 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                 runFrameSeconds = 0
                 publishSeconds = 0
                 secondMarker = now
+
+                // The real rate isn't known until the game configures its own
+                // sound hardware, a few frames into boot, and a handful of
+                // games change it again later (e.g. for battle music) — so
+                // this keeps checking for the life of the session rather than
+                // reading it once.
+                let liveAudioRate = Double(core.audioSampleRate)
+                if liveAudioRate > 0, liveAudioRate != currentAudioRate {
+                    currentAudioRate = liveAudioRate
+                    targetQueuedFrames = Int(currentAudioRate * 0.030)
+                    // AVAudioEngine start/stop happen on the main thread
+                    // everywhere else in this class; stay consistent rather
+                    // than prove out a new pattern here.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.audio.syncSampleRate(liveAudioRate)
+                    }
+                }
+
                 // Sampled on this thread, which owns the core, and published
                 // to the main queue.
                 let perf = String(format: "PERF runFrame %.2fms  publish %.2fms  budget %.2fms  fps %.1f",
                                    avgRunFrameMs, avgPublishMs, budgetMs, fps)
                 let audioLine = String(format: "AUDIO queued %d  target %d  underruns %d  rate %.0fHz",
                                         core.queuedAudioFrameCount, targetQueuedFrames,
-                                        audio.underrunCount, AudioEngine.sampleRate)
+                                        audio.underrunCount, currentAudioRate)
                 audio.resetUnderrunCount()
                 let diagnostics = [perf, audioLine, formatBuildDiagnostics(), formatVideoDiagnostics()]
                     .joined(separator: "\n")

@@ -91,6 +91,10 @@ final class MGBACore: EmulatorCore {
         ioLock.withLock { Int(dm_core_queued_audio(core)) }
     }
 
+    var audioSampleRate: Int {
+        ioLock.withLock { Int(dm_core_audio_rate(core)) }
+    }
+
     var batteryRAM: [UInt8]? {
         ioLock.withLock {
             let size = Int(dm_core_save_size(core))

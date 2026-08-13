@@ -65,6 +65,12 @@ void dm_core_flush_audio(DMCore* core);
 /// Stereo frames currently queued, so emulation can be paced against it.
 size_t dm_core_queued_audio(DMCore* core);
 
+/// The rate audio is actually being produced at, in Hz. Not fixed: it comes
+/// from the emulated SOUNDBIAS register, which the game's own boot code sets
+/// (commonly 32768, 65536 or 131072), so it is only meaningful after a few
+/// frames have run and can change again later. 0 if unavailable.
+unsigned dm_core_audio_rate(DMCore* core);
+
 /// Read emulated memory. Used by the battle overlay; safe at any address.
 void dm_core_read_memory(DMCore* core, uint32_t address, uint8_t* out, size_t count);
 

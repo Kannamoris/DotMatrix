@@ -38,6 +38,16 @@ protocol EmulatorCore: AnyObject {
     /// against this, so it is the effective master clock.
     var queuedAudioFrameCount: Int { get }
 
+    /// The rate audio is actually produced at, in Hz. Not fixed to any nominal
+    /// value — the game's own boot code configures it through the sound
+    /// hardware, so it's only meaningful after a few frames have run and can
+    /// change again later. Both the output format and the pacing math need to
+    /// track this rather than assume one; a mismatch here doesn't glitch the
+    /// audio so much as silently cap how fast the whole emulator can run,
+    /// since the pacer ends up throttling production to match a drain rate
+    /// that was never the real one. 0 if not yet known.
+    var audioSampleRate: Int { get }
+
     /// Battery-backed cartridge save, or nil if this cartridge has none.
     var batteryRAM: [UInt8]? { get }
     func loadBatteryRAM(_ bytes: [UInt8])
@@ -65,4 +75,5 @@ protocol EmulatorCore: AnyObject {
 extension EmulatorCore {
     var auxiliarySaveData: [String: Int] { [:] }
     func restoreAuxiliarySaveData(_ data: [String: Int]) {}
+    var audioSampleRate: Int { 0 }
 }
