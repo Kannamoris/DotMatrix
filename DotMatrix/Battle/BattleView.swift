@@ -232,7 +232,9 @@ private struct MoveButton: View {
                     Spacer(minLength: 0)
                     Text("\(move.currentPP)/\(move.maxPP)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(move.isUsable ? .secondary : .red)
+                        // Both branches must be the same ShapeStyle type; the
+                        // hierarchical styles and Color don't unify.
+                        .foregroundStyle(move.isUsable ? Color.secondary : Color.red)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
