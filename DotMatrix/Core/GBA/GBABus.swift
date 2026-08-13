@@ -180,8 +180,9 @@ final class GBABus: ARMBus {
         cartridge.backup.advance(cycles)
 
         ppu.step(cycles)
-        if ppu.consumeHBlankTrigger() { runDMA(timing: .hblank) }
-        if ppu.consumeVBlankTrigger() { runDMA(timing: .vblank) }
+        // One pass per scanline that elapsed, not one per batch.
+        for _ in 0..<ppu.consumeHBlankTriggers() { runDMA(timing: .hblank) }
+        for _ in 0..<ppu.consumeVBlankTriggers() { runDMA(timing: .vblank) }
     }
 
     func idle(_ cycles: Int) {
@@ -570,7 +571,16 @@ final class GBABus: ARMBus {
         dmaInProgress = true
         defer { dmaInProgress = false }
 
-        while let channel = dma.pendingChannel(for: timing) {
+        // Every channel armed for this trigger runs, once, lowest index first —
+        // that is the hardware's priority order. The previous loop stopped at
+        // the first repeating channel it found, so anything below it was never
+        // serviced. Which channels are armed varies with timing, so the effect
+        // was intermittent: graphics that arrive by a lower-priority channel
+        // simply never transferred, leaving the screen black.
+        for channel in 0..<4 {
+            let config = dma.channels[channel]
+            guard config.enabled, config.active, config.timing == timing else { continue }
+
             dma.run(channel) { source, destination, is32Bit in
                 if is32Bit {
                     let word = self.read32(source, sequential: true)
@@ -580,9 +590,6 @@ final class GBABus: ARMBus {
                     self.write16(destination, half, sequential: true)
                 }
             }
-            // `run` clears the channel, so a non-repeating one won't re-match.
-            if !dma.channels[channel].active { continue }
-            break
         }
     }
 

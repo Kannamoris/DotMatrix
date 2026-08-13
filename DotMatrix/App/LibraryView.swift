@@ -11,17 +11,33 @@ struct LibraryView: View {
     @State private var importMessage: String?
     /// Set while confirming a save erase; erasing is irreversible.
     @State private var pendingSaveDeletion: ROMEntry?
+    /// Navigation path, so the single cartridge can be opened without a tap.
+    @State private var path: [ROMEntry] = []
+    /// Only auto-open once per launch, or backing out would immediately
+    /// re-enter and trap you on the play screen.
+    @State private var hasAutoLaunched = false
 
     private let saves = SaveManager()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if library.entries.isEmpty {
                     emptyState
                 } else {
                     romList
                 }
+            }
+            .navigationDestination(for: ROMEntry.self) { entry in
+                EmulatorView(entry: entry, settings: settings)
+            }
+            .task {
+                // One cartridge and nothing to choose between: go straight in.
+                guard !hasAutoLaunched, path.isEmpty,
+                      library.entries.count == 1, let only = library.entries.first
+                else { return }
+                hasAutoLaunched = true
+                path = [only]
             }
             .navigationTitle("DotMatrix")
             .toolbar {
@@ -85,9 +101,7 @@ struct LibraryView: View {
         List {
             Section {
                 ForEach(library.entries) { entry in
-                    NavigationLink {
-                        EmulatorView(entry: entry, settings: settings)
-                    } label: {
+                    NavigationLink(value: entry) {
                         row(for: entry)
                     }
                     .swipeActions(edge: .trailing) {

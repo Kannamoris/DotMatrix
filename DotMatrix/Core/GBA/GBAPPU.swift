@@ -55,8 +55,12 @@ final class GBAPPU {
     // MARK: Timing
 
     private var dot = 0
-    private var hblankTriggered = false
-    private var vblankTriggered = false
+    /// Counts, not flags. A single peripheral batch can span several scanlines
+    /// — the deferred-cycle drain hands over thousands of cycles at once after
+    /// a DMA — and HBlank DMA must run once per scanline. Collapsing several
+    /// into one silently drops transfers.
+    private var hblankTriggers = 0
+    private var vblankTriggers = 0
 
     private let interrupts: InterruptController
 
@@ -137,7 +141,7 @@ final class GBAPPU {
         }
         // HBlank DMA does not run during VBlank.
         if vcount < UInt16(Self.height) {
-            hblankTriggered = true
+            hblankTriggers += 1
         }
     }
 
@@ -150,7 +154,7 @@ final class GBAPPU {
             if dispstat & 0x0008 != 0 {
                 interrupts.request(.vblank)
             }
-            vblankTriggered = true
+            vblankTriggers += 1
             frameComplete = true
         } else if vcount >= 228 {
             vcount = 0
@@ -182,14 +186,15 @@ final class GBAPPU {
         return frameComplete
     }
 
-    func consumeHBlankTrigger() -> Bool {
-        defer { hblankTriggered = false }
-        return hblankTriggered
+    /// Take the pending HBlank count, clearing it. Each one owes a DMA pass.
+    func consumeHBlankTriggers() -> Int {
+        defer { hblankTriggers = 0 }
+        return hblankTriggers
     }
 
-    func consumeVBlankTrigger() -> Bool {
-        defer { vblankTriggered = false }
-        return vblankTriggered
+    func consumeVBlankTriggers() -> Int {
+        defer { vblankTriggers = 0 }
+        return vblankTriggers
     }
 
     // MARK: Scanline rendering
