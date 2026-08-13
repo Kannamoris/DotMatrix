@@ -17,6 +17,10 @@ struct BattleView: View {
     /// Sends a chosen move back for translation into button presses.
     var onSelectMove: (Int) -> Void
     var onSelectAction: (BattleAction) -> Void
+    /// A single A press — advances messages, damage/faint text, and anything
+    /// else where the game is just waiting for acknowledgement rather than a
+    /// menu choice.
+    var onAdvance: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -35,23 +39,26 @@ struct BattleView: View {
 
     // MARK: Scene
 
-    /// The battlefield region of the emulated screen, without the game's own
-    /// menu or message box.
+    /// The emulated screen. Cropped to just the battlefield while the custom
+    /// action/move grid is up (it replaces the game's own menu there, so
+    /// showing both would be redundant) and shown in full otherwise — the
+    /// game draws messages, damage numbers and faint text in the bottom third
+    /// that the crop would otherwise hide with no way to read or advance it.
     private var scene: some View {
         MetalDisplayView(
             session: session,
             gridStrength: 0,
             smoothing: 0,
-            sourceRect: BattleLayout.sceneRegion
+            sourceRect: BattleLayout.sceneRegion(for: state.phase)
         )
-        .aspectRatio(BattleLayout.sceneAspect, contentMode: .fit)
+        .aspectRatio(BattleLayout.sceneAspect(for: state.phase), contentMode: .fit)
         .frame(maxWidth: .infinity)
     }
 
     private func sceneHeight(in geometry: GeometryProxy) -> CGFloat {
         // Give the scene the width, and whatever height that implies, capped so
         // the controls always keep a usable share of a short screen.
-        let natural = geometry.size.width / BattleLayout.sceneAspect
+        let natural = geometry.size.width / BattleLayout.sceneAspect(for: state.phase)
         return min(natural, geometry.size.height * 0.55)
     }
 
@@ -120,15 +127,23 @@ struct BattleView: View {
     }
 
     private var waitingIndicator: some View {
-        // The game is animating or printing; taps would be swallowed anyway, so
-        // say so rather than showing dead buttons.
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text("Waiting for the battle to continue")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        // Covers both "the game is animating, taps do nothing" and "the game
+        // is printing a message and A advances it" — there's no reliable way
+        // to tell those apart from memory alone, and sending A when the game
+        // isn't listening for it is a harmless no-op, so the whole area is
+        // always tappable rather than guessing which case this is.
+        Button(action: onAdvance) {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.tap")
+                    .foregroundStyle(.secondary)
+                Text("Tap to continue")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, minHeight: 60)
+        .buttonStyle(.plain)
     }
 }
 
@@ -169,15 +184,27 @@ enum BattleAction: CaseIterable {
 
 /// Where the battlefield sits within the emulated screen, and how it is scaled.
 enum BattleLayout {
-    /// The game draws its menu and message box across the bottom of the screen.
-    /// Cropping them away leaves the battlefield, which the native layout
-    /// presents on its own.
-    ///
-    /// Expressed in source pixels; refined once a real battle can be inspected.
-    static let sceneRegion = CGRect(x: 0, y: 0, width: 240, height: 112)
+    /// Full native screen, 240x160.
+    static let fullScreen = CGRect(x: 0, y: 0, width: 240, height: 160)
 
-    static var sceneAspect: CGFloat {
-        sceneRegion.width / sceneRegion.height
+    /// The game draws its menu across the bottom third of the screen.
+    /// Cropping it away leaves just the battlefield, in source pixels.
+    static let battlefieldOnly = CGRect(x: 0, y: 0, width: 240, height: 112)
+
+    /// Cropped to the battlefield only while the custom action/move grid
+    /// replaces the game's own menu; full screen otherwise, so messages,
+    /// damage numbers and faint text — which the game draws in the region
+    /// that would otherwise be cropped away — stay visible.
+    static func sceneRegion(for phase: BattleState.Phase) -> CGRect {
+        switch phase {
+        case .actionSelection, .moveSelection: return battlefieldOnly
+        default: return fullScreen
+        }
+    }
+
+    static func sceneAspect(for phase: BattleState.Phase) -> CGFloat {
+        let region = sceneRegion(for: phase)
+        return region.width / region.height
     }
 }
 

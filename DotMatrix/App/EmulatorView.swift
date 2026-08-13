@@ -180,7 +180,8 @@ private struct RunningSessionView: View {
             session: session,
             state: session.battleState,
             onSelectMove: { session.selectBattleSlot($0) },
-            onSelectAction: { session.selectBattleSlot($0.slotIndex) }
+            onSelectAction: { session.selectBattleSlot($0.slotIndex) },
+            onAdvance: { session.advanceBattleText() }
         )
     }
 

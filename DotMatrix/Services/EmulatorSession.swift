@@ -247,6 +247,16 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         enqueueSyntheticInput([horizontal, vertical, .a])
     }
 
+    /// A single A press — the universal "continue" input for battle messages,
+    /// damage/faint text, and anything else where the game is just waiting
+    /// for acknowledgement rather than a menu choice. Harmless to send when
+    /// the game isn't actually listening for it (mid-animation, say): it's
+    /// just a no-op then, there's no reliable way from memory alone to tell
+    /// that case apart from "a message is up and A advances it."
+    func advanceBattleText() {
+        enqueueSyntheticInput([.a])
+    }
+
     private func enqueueSyntheticInput(_ presses: [GBAButtons]) {
         var queue: [QueuedInput] = []
         for buttons in presses {
