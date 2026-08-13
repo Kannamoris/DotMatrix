@@ -7,7 +7,7 @@ import Foundation
 /// core underneath could be swapped, and this is that swap: a mature, widely
 /// tested implementation in place of the hand-written one.
 final class MGBACore: EmulatorCore {
-    private let handle: OpaquePointer
+    private let core: OpaquePointer
     private var audioLeft: [Float]
     private var audioRight: [Float]
 
@@ -15,35 +15,33 @@ final class MGBACore: EmulatorCore {
     let gameCode: String
 
     /// Fails if the image isn't a usable cartridge.
+    ///
+    /// `DMCore` is opaque in the header, so Swift imports every reference to it
+    /// as `OpaquePointer` — there is no Swift-side struct to point at.
     init?(rom: Data) {
-        guard let handle = rom.withUnsafeBytes({ buffer -> OpaquePointer? in
+        guard let created = rom.withUnsafeBytes({ buffer -> OpaquePointer? in
             guard let base = buffer.bindMemory(to: UInt8.self).baseAddress else { return nil }
-            return OpaquePointer(dm_core_create(base, buffer.count))
+            return dm_core_create(base, buffer.count)
         }) else {
             return nil
         }
-        self.handle = handle
+        self.core = created
 
         self.audioLeft = [Float](repeating: 0, count: 4096)
         self.audioRight = [Float](repeating: 0, count: 4096)
 
         var title = [CChar](repeating: 0, count: 32)
-        dm_core_game_title(UnsafeMutableRawPointer(handle).assumingMemoryBound(to: DMCore.self), &title, 32)
+        dm_core_game_title(created, &title, 32)
         let parsed = String(cString: title).trimmingCharacters(in: .whitespaces)
         self.displayTitle = parsed.isEmpty ? "Untitled Cartridge" : parsed
 
         var code = [CChar](repeating: 0, count: 16)
-        dm_core_game_code(UnsafeMutableRawPointer(handle).assumingMemoryBound(to: DMCore.self), &code, 16)
+        dm_core_game_code(created, &code, 16)
         self.gameCode = String(cString: code).trimmingCharacters(in: .whitespaces)
     }
 
     deinit {
         dm_core_destroy(core)
-    }
-
-    /// The shim's handle, typed the way its functions expect.
-    private var core: UnsafeMutablePointer<DMCore> {
-        UnsafeMutableRawPointer(handle).assumingMemoryBound(to: DMCore.self)
     }
 
     // MARK: EmulatorCore
