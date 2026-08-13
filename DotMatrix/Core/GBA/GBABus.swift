@@ -90,6 +90,12 @@ final class GBABus: ARMBus {
         writeWord(0x138, 0xE8BD_500F)
         // 0x13C: subs r15, r14, #4       — return, restoring CPSR from SPSR
         writeWord(0x13C, 0xE25E_F004)
+
+        // Past the dispatcher. Never executed, but it is what the pipeline has
+        // prefetched as the handler returns, and games read the BIOS region to
+        // observe exactly that. Two instructions ahead of 0x13C is 0x144.
+        writeWord(0x140, 0xE12F_FF1E)
+        writeWord(0x144, 0xE55E_C002)
     }
 
     // MARK: Cycle accounting
@@ -233,6 +239,21 @@ final class GBABus: ARMBus {
         value |= UInt32(readByte(aligned &+ 2)) << 16
         value |= UInt32(readByte(aligned &+ 3)) << 24
         openBus = value
+
+        // While the CPU is executing inside the BIOS, the value visible to a
+        // read of that region is whatever the pipeline has fetched — two
+        // instructions ahead of the one running, not the one running. That is
+        // what makes the value differ during an interrupt and after it returns.
+        if aligned < 0x4000, let cpu, cpu.pc == aligned, !cpu.thumb {
+            let ahead = Int(aligned) + 8
+            if ahead + 3 < bios.count {
+                lastBIOSFetch = UInt32(bios[ahead])
+                    | UInt32(bios[ahead + 1]) << 8
+                    | UInt32(bios[ahead + 2]) << 16
+                    | UInt32(bios[ahead + 3]) << 24
+            }
+        }
+
         return value
     }
 
