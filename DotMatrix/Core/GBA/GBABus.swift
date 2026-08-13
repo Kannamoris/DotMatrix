@@ -107,6 +107,20 @@ final class GBABus: ARMBus {
     /// Cycles banked by a re-entrant call, drained by the outer one.
     private var deferredCycles = 0
 
+    /// Cycles elapsed but not yet handed to the peripherals.
+    ///
+    /// Every memory access ticks the clock, and at just under two cycles per
+    /// access that was 150,000 separate peripheral dispatches per frame — six
+    /// calls each — to advance 280,000 cycles. Batching collapses that by more
+    /// than an order of magnitude. The peripherals all accept an arbitrary
+    /// cycle count and clamp to their own boundaries internally, so a batch is
+    /// equivalent to the same cycles delivered one at a time.
+    private var pendingCycles = 0
+
+    /// How far the clock may run before the peripherals must catch up. Small
+    /// enough that interrupt latency stays within a few instructions.
+    private static let batchThreshold = 32
+
     /// Advance every peripheral. The PPU can raise DMA-triggering events, so
     /// those are serviced here rather than by the caller.
     func tick(_ cycles: Int) {
@@ -122,10 +136,25 @@ final class GBABus: ARMBus {
             return
         }
 
+        pendingCycles += cycles
+        if pendingCycles >= Self.batchThreshold {
+            flushPeripherals()
+        }
+    }
+
+    /// Hand the accumulated cycles to the peripherals.
+    ///
+    /// Called when the batch fills, and forced before anything observes
+    /// hardware state — an I/O read must not see a stale scanline counter.
+    func flushPeripherals() {
+        guard pendingCycles > 0, !insideTick else { return }
+
         insideTick = true
         defer { insideTick = false }
 
-        var pending = cycles
+        var pending = pendingCycles
+        pendingCycles = 0
+
         while pending > 0 {
             advancePeripherals(pending)
             pending = deferredCycles
@@ -160,7 +189,10 @@ final class GBABus: ARMBus {
     }
 
     var irqPending: Bool {
-        interrupts.hasPendingRequest
+        // Flushing here keeps interrupt latency at the batch size rather than
+        // letting a pending request sit unseen until the next I/O access.
+        if pendingCycles >= Self.batchThreshold { flushPeripherals() }
+        return interrupts.hasPendingRequest
     }
 
     // MARK: Wait states
@@ -290,6 +322,7 @@ final class GBABus: ARMBus {
         case 0x3:
             return iwram[Int(address & 0x7FFF)]
         case 0x4:
+            flushPeripherals()
             return readIOByte(address)
         case 0x5:
             return ppu.readPalette(address & 0x3FF)
@@ -329,7 +362,9 @@ final class GBABus: ARMBus {
         switch (address >> 24) & 0xF {
         case 0x2: ewram[Int(address & 0x3FFFF)] = value
         case 0x3: iwram[Int(address & 0x7FFF)] = value
-        case 0x4: writeIOByte(address, value)
+        case 0x4:
+            flushPeripherals()
+            writeIOByte(address, value)
         case 0x5:
             // Palette RAM and VRAM have no byte lanes: an 8-bit write is
             // mirrored across the halfword. OAM ignores byte writes entirely.
@@ -385,6 +420,7 @@ final class GBABus: ARMBus {
             iwram[offset] = UInt8(value & 0xFF)
             iwram[offset + 1] = UInt8(value >> 8)
         case 0x4:
+            flushPeripherals()
             writeIO(address & ~1, value)
         case 0x5:
             ppu.writePalette16(address & 0x3FE, value)
