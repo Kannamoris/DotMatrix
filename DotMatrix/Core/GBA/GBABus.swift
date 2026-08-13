@@ -147,6 +147,8 @@ final class GBABus: ARMBus {
         }
 
         apu.step(cycles)
+        // Flash programming and erasing settle on their own clock.
+        cartridge.backup.advance(cycles)
 
         ppu.step(cycles)
         if ppu.consumeHBlankTrigger() { runDMA(timing: .hblank) }

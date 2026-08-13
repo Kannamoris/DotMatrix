@@ -180,12 +180,18 @@ protocol BackupMedium: AnyObject {
     func load(_ bytes: [UInt8])
 
     var isDirty: Bool { get set }
+
+    /// Advance the medium's own clock. Programming and erasing flash take real
+    /// time on the chip, and drivers watch for the busy signal that implies.
+    func advance(_ cycles: Int)
 }
 
 /// Plain battery-backed static RAM. Directly addressable, no protocol.
 final class SRAMBackup: BackupMedium {
     private(set) var storage: [UInt8]
     var isDirty = false
+
+    func advance(_ cycles: Int) {}
 
     init(size: Int) {
         // Save media erase to 0xFF; games check for that to detect a fresh chip.
@@ -239,6 +245,33 @@ final class FlashBackup: BackupMedium {
     private var bankSwitchArmed = false
     private var bank = 0
 
+    /// Programming and erasing are not instantaneous on real hardware, and a
+    /// driver waits to observe the chip go busy before waiting for it to
+    /// finish. Completing immediately means that busy state never appears and
+    /// the wait never ends.
+    private var busyCyclesRemaining = 0
+    /// Which 4 KB sector is settling; reads elsewhere are unaffected.
+    private var settlingSector = -1
+
+    private enum Timing {
+        static let program = 650
+        static let erase = 30_000
+    }
+
+    func advance(_ cycles: Int) {
+        guard busyCyclesRemaining > 0 else { return }
+        busyCyclesRemaining -= cycles
+        if busyCyclesRemaining <= 0 {
+            busyCyclesRemaining = 0
+            settlingSector = -1
+        }
+    }
+
+    private func beginOperation(sector: Int, cycles: Int) {
+        settlingSector = sector
+        busyCyclesRemaining = cycles
+    }
+
     /// Macronix 128 KB device. Emerald reads these two bytes to size the chip,
     /// and reporting the wrong pair makes it refuse to save.
     private let manufacturerID: UInt8
@@ -248,8 +281,9 @@ final class FlashBackup: BackupMedium {
         self.size = size
         self.storage = [UInt8](repeating: 0xFF, count: size)
         if size > 64 * 1024 {
-            self.manufacturerID = 0xC2   // Macronix
-            self.deviceID = 0x09         // MX29L010, 128 KB
+            // Sanyo LE26FV10N1TS, the 128 KB part these games expect.
+            self.manufacturerID = 0x62
+            self.deviceID = 0x13
         } else {
             self.manufacturerID = 0x32   // Panasonic
             self.deviceID = 0x1B         // MN63F805MNP, 64 KB
@@ -268,6 +302,12 @@ final class FlashBackup: BackupMedium {
 
         let index = bank * 0x10000 + offset
         guard index < storage.count else { return 0xFF }
+
+        // While the sector is settling the chip reports progress rather than
+        // data: bit 7 reads back inverted until the operation completes.
+        if busyCyclesRemaining > 0, (offset >> 12) == settlingSector {
+            return (storage[index] ^ 0x80) & 0x80
+        }
         return storage[index]
     }
 
@@ -282,6 +322,9 @@ final class FlashBackup: BackupMedium {
                 // Programming can only clear bits; setting them needs an erase.
                 storage[index] &= value
                 isDirty = true
+                // Programming does not mark the sector busy. A byte written
+                // here is expected to read back immediately, and reporting
+                // busy for it breaks that.
             }
             writeArmed = false
             phase = .ready
@@ -333,6 +376,7 @@ final class FlashBackup: BackupMedium {
                 // Chip erase.
                 for i in storage.indices { storage[i] = 0xFF }
                 isDirty = true
+                beginOperation(sector: 0, cycles: Timing.erase)
             } else if value == 0x30 {
                 // Sector erase: 4 KB containing this address.
                 let sectorBase = bank * 0x10000 + Int(offset & 0xF000)
@@ -340,6 +384,7 @@ final class FlashBackup: BackupMedium {
                     storage[i] = 0xFF
                 }
                 isDirty = true
+                beginOperation(sector: Int(offset) >> 12, cycles: Timing.erase)
             }
             eraseArmed = false
             phase = .ready
@@ -362,6 +407,8 @@ final class FlashBackup: BackupMedium {
 final class EEPROMBackup: BackupMedium {
     private var storage: [UInt8]
     var isDirty = false
+
+    func advance(_ cycles: Int) {}
 
     init(size: Int) {
         storage = [UInt8](repeating: 0xFF, count: max(size, 512))
