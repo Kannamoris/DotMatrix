@@ -26,6 +26,16 @@ final class CartridgeGPIO {
     private var writtenData: UInt16 = 0
     /// Per-pin direction: a set bit means the game drives that pin.
     private var direction: UInt16 = 0
+    /// The clock is off by default.
+    ///
+    /// The protocol implementation is not yet correct: with the port live, the
+    /// game stalls partway out of the intro on a half-completed fade and never
+    /// reaches the overworld. Disabling it restores the pre-clock behaviour,
+    /// where the port reads as ordinary ROM — the game then runs normally and
+    /// only loses the time-driven features. A broken clock costs the whole
+    /// game; an absent one costs berry growth.
+    static var isRealTimeClockEnabled = false
+
     /// Control bit 0 exposes the port to reads. While clear, the addresses
     /// read back as ROM.
     private(set) var readable = false
@@ -60,7 +70,7 @@ final class CartridgeGPIO {
             direction = value & 0x000F
             rtc.update(pins: writtenData, direction: direction)
         case Self.controlRegister:
-            readable = value & 1 != 0
+            readable = Self.isRealTimeClockEnabled && (value & 1 != 0)
         default:
             break
         }
@@ -81,13 +91,16 @@ final class CartridgeGPIO {
 /// the model is edge-driven rather than sampled: what matters is the 0→1
 /// transition, not how often the emulator happens to look.
 private final class RealTimeClock {
+    /// Command codes as the chip numbers them. These are not sequential and
+    /// getting them wrong is quiet: the game asks for one register and is
+    /// answered from another, so it reads plausible nonsense rather than
+    /// failing outright.
     private enum Command: Int {
         case reset = 0
-        case status = 1
         case dateTime = 2
-        case time = 3
-        case alarm = 4
-        case forceIRQ = 6
+        case forceIRQ = 3
+        case status = 4
+        case time = 6
 
         /// Payload length in bytes.
         var byteCount: Int {
@@ -96,7 +109,6 @@ private final class RealTimeClock {
             case .status: return 1
             case .time: return 3
             case .dateTime: return 7
-            case .alarm: return 2
             }
         }
     }
