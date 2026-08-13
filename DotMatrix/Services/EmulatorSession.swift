@@ -253,8 +253,16 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
 
             if !state.fastForward {
                 if state.audioActive {
-                    if core.queuedAudioFrameCount > targetQueuedFrames {
-                        Thread.sleep(forTimeInterval: 0.001)
+                    let excess = core.queuedAudioFrameCount - targetQueuedFrames
+                    if excess > 0 {
+                        // Sleep for how long the audio device will actually
+                        // take to drain the excess, instead of polling in
+                        // fixed 1ms slices. Each wake from a sub-millisecond
+                        // sleep pays real scheduler overhead, and this was
+                        // looping ~15-20 times per emulated frame — that
+                        // overhead, not the core, was the missing speed.
+                        let waitSeconds = min(Double(excess) / AudioEngine.sampleRate, 0.020)
+                        Thread.sleep(forTimeInterval: waitSeconds)
                         continue
                     }
                 } else {
