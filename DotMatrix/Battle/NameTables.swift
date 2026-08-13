@@ -93,18 +93,19 @@ struct CartridgeTextReader {
         var moveNameStride: Int
         var typeNames: UInt32
         var typeNameStride: Int
-    }
 
-    /// gMoveNames / gTypeNames, from EmeraldRecomp's byte-matched ROM symbol
-    /// table (built directly from the decompiled ELF, cross-checked against
-    /// the retail ROM). Strides are MOVE_NAME_LENGTH/TYPE_NAME_LENGTH + 1
-    /// terminator byte, straight from include/constants/global.h.
-    static let verified = TableAddresses(
-        moveNames: 0x0831_977C,
-        moveNameStride: 13,
-        typeNames: 0x0831_AE38,
-        typeNameStride: 7
-    )
+        /// gMoveNames / gTypeNames, from EmeraldRecomp's byte-matched ROM
+        /// symbol table (built directly from the decompiled ELF, cross-checked
+        /// against the retail ROM). Strides are MOVE_NAME_LENGTH/
+        /// TYPE_NAME_LENGTH + 1 terminator byte, straight from
+        /// include/constants/global.h.
+        static let verified = TableAddresses(
+            moveNames: 0x0831_977C,
+            moveNameStride: 13,
+            typeNames: 0x0831_AE38,
+            typeNameStride: 7
+        )
+    }
 
     var tables: TableAddresses?
 

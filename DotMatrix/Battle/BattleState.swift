@@ -113,15 +113,15 @@ struct MemoryBattleStateReader: BattleStateReading {
         var battleMons: UInt32
         /// gBattleMoves. struct BattleMove, 9 bytes each, indexed by move ID.
         var battleMoves: UInt32
-    }
 
-    /// Verified 2026-08-13 against Pokémon Emerald (USA), BPEE.
-    static let verified = Addresses(
-        mainCallback2: 0x030022C4,
-        battlerControllerFunc: 0x03005D60,
-        battleMons: 0x0202_4084,
-        battleMoves: 0x0831_C898
-    )
+        /// Verified 2026-08-13 against Pokémon Emerald (USA), BPEE.
+        static let verified = Addresses(
+            mainCallback2: 0x030022C4,
+            battlerControllerFunc: 0x03005D60,
+            battleMons: 0x0202_4084,
+            battleMoves: 0x0831_C898
+        )
+    }
 
     /// Stored callback pointers carry the Thumb-mode bit (+1 over the
     /// disassembly address), matching how they're actually found in RAM.
