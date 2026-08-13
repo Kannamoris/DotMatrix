@@ -435,9 +435,14 @@ extension ARM7TDMI {
             for register in transferred {
                 let value = bus.read32(address & ~3, sequential: sequential)
                 if register == 15 {
-                    // A pop into PC can switch instruction set on ARMv4T only
-                    // via the low bit, which is how Thumb functions return.
-                    branchAndExchange(to: value)
+                    // POP {PC} does not interwork on ARMv4T: PC is loaded and
+                    // the core stays in Thumb regardless of bit 0. Only BX
+                    // changes instruction set. (Bit-0 interworking on POP is an
+                    // ARMv5T addition.) Treating it as a BX drops into ARM the
+                    // moment a callee returns to a Thumb address whose low bit
+                    // happens to be clear, and executes Thumb code as ARM.
+                    pc = value & ~1
+                    branched = true
                 } else {
                     registers[register] = value
                 }
@@ -476,7 +481,10 @@ extension ARM7TDMI {
                 pc = value & ~1
                 branched = true
             } else {
-                bus.write32(address & ~3, pc &+ 4, sequential: false)
+                // The stored PC is the pipeline-visible value plus one more
+                // instruction: +4 for the Thumb read, +2 for the instruction
+                // width. This mirrors ARM, where the same case stores pc+12.
+                bus.write32(address & ~3, pc &+ 6, sequential: false)
             }
             registers[rb] = address &+ 0x40
             return

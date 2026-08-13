@@ -220,6 +220,14 @@ extension ARM7TDMI {
             } else {
                 writeRegister(rd, result)
             }
+        } else if rd == 15 && setFlags {
+            // The comparison opcodes with S set and Rd = R15 are the ARMv4
+            // "P variant" (TSTP/TEQP/CMPP/CMNP): the result is discarded and
+            // SPSR is copied into CPSR. Code uses it to drop back to the
+            // caller's mode without touching PC. Treating it as an ordinary
+            // compare leaves the CPU stuck in whatever mode it was in, running
+            // on that mode's banked — and possibly uninitialised — stack.
+            cpsr = spsr
         }
     }
 

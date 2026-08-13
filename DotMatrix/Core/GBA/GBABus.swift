@@ -30,6 +30,11 @@ final class GBABus: ARMBus {
     /// Last value on the bus, returned for reads of unmapped regions.
     private var openBus: UInt32 = 0
 
+    /// Last opcode fetched from BIOS. Reads of the BIOS region from outside it
+    /// return this rather than memory. The initial value is what the real BIOS
+    /// leaves latched once it hands control to the cartridge.
+    private var lastBIOSFetch: UInt32 = 0xE129_F000
+
     private(set) var totalCycles = 0
 
     /// Guards against a DMA that re-triggers itself through a register write.
@@ -187,20 +192,41 @@ final class GBABus: ARMBus {
         return readByte(address)
     }
 
+    /// The save chip hangs off an 8-bit bus, so a wider read returns the single
+    /// addressed byte repeated across the whole width rather than consecutive
+    /// bytes.
+    private func isEightBitBus(_ address: UInt32) -> Bool {
+        let region = (address >> 24) & 0xF
+        return region == 0xE || region == 0xF
+    }
+
     func read16(_ address: UInt32, sequential: Bool) -> UInt16 {
         tick(waitCycles(for: address, width: 2, sequential: sequential))
+        if isEightBitBus(address) {
+            let byte = UInt16(readByte(address))
+            return byte | (byte << 8)
+        }
         let aligned = address & ~1
         return UInt16(readByte(aligned)) | (UInt16(readByte(aligned &+ 1)) << 8)
     }
 
     func read32(_ address: UInt32, sequential: Bool) -> UInt32 {
         tick(waitCycles(for: address, width: 4, sequential: sequential))
+        if isEightBitBus(address) {
+            let byte = UInt32(readByte(address))
+            return byte | (byte << 8) | (byte << 16) | (byte << 24)
+        }
         let aligned = address & ~3
         var value = UInt32(readByte(aligned))
         value |= UInt32(readByte(aligned &+ 1)) << 8
         value |= UInt32(readByte(aligned &+ 2)) << 16
         value |= UInt32(readByte(aligned &+ 3)) << 24
         openBus = value
+        // While the CPU is running from BIOS, remember what it fetched: reads
+        // of the BIOS region from elsewhere return that, not memory contents.
+        if aligned < 0x4000, let cpu, cpu.pc < 0x4000 {
+            lastBIOSFetch = value
+        }
         return value
     }
 
@@ -216,6 +242,13 @@ final class GBABus: ARMBus {
     private func readByte(_ address: UInt32) -> UInt8 {
         switch (address >> 24) & 0xF {
         case 0x0:
+            // The BIOS is only readable while executing inside it. From
+            // anywhere else the bus returns the last opcode the BIOS fetched,
+            // which is why games can probe address 0 and get a fixed value
+            // rather than whatever the image holds.
+            if let cpu, cpu.pc >= 0x4000 {
+                return UInt8((lastBIOSFetch >> (8 * (address & 3))) & 0xFF)
+            }
             let offset = Int(address & 0x3FFF)
             return offset < bios.count ? bios[offset] : 0
         case 0x2:
