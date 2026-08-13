@@ -140,6 +140,16 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         return rate > 0 ? rate : AudioEngine.fallbackSampleRate
     }
 
+    /// Roughly 30ms of buffering: enough to absorb a scheduling hiccup, short
+    /// enough that input still feels immediate. Clamped well under the ring
+    /// buffer's actual capacity (see DM_AUDIO_BUFFER) — at a high enough
+    /// SOUNDBIAS rate, 30ms of frames could otherwise exceed it, and this
+    /// pacer is the only thing standing between that and the same overflow
+    /// abort a synchronization bug in the buffer caused earlier.
+    private static func targetQueuedFrames(forRate rate: Double) -> Int {
+        min(Int(rate * 0.030), Int(DM_AUDIO_BUFFER) * 3 / 4)
+    }
+
     @MainActor
     func stop() {
         guard isRunning else { return }
@@ -217,9 +227,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         // emulation speed, since the pacer below throttles production to
         // match a drain rate that was never the real one.
         var currentAudioRate = initialAudioSampleRate()
-        // Keep roughly 30 ms of audio queued: enough to absorb a scheduling
-        // hiccup, short enough that input still feels immediate.
-        var targetQueuedFrames = Int(currentAudioRate * 0.030)
+        var targetQueuedFrames = Self.targetQueuedFrames(forRate: currentAudioRate)
 
         var framesThisSecond = 0
         var secondMarker = CFAbsoluteTimeGetCurrent()
@@ -320,7 +328,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                 let liveAudioRate = Double(core.audioSampleRate)
                 if liveAudioRate > 0, liveAudioRate != currentAudioRate {
                     currentAudioRate = liveAudioRate
-                    targetQueuedFrames = Int(currentAudioRate * 0.030)
+                    targetQueuedFrames = Self.targetQueuedFrames(forRate: currentAudioRate)
                     // AVAudioEngine start/stop happen on the main thread
                     // everywhere else in this class; stay consistent rather
                     // than prove out a new pattern here.

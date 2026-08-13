@@ -21,6 +21,14 @@ extern "C" {
 #define DM_SCREEN_WIDTH 240
 #define DM_SCREEN_HEIGHT 160
 
+/// Capacity of the audio ring buffer, in stereo frames. Sized for the fastest
+/// rate SOUNDBIAS can actually select (262144Hz) to hold comfortably more
+/// than one video frame's worth (~4390 at that rate) on top of the pacer's
+/// ~30ms target — mGBA has no fixed output rate (see dm_core_audio_rate), so
+/// this can't be sized against any one Hz figure. Swift-visible so
+/// EmulatorSession can keep its pacing target safely under it.
+#define DM_AUDIO_BUFFER 16384
+
 /// Buttons, in the hardware's KEYINPUT bit order.
 typedef enum {
     DM_KEY_A      = 1 << 0,

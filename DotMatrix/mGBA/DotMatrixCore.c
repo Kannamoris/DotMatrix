@@ -14,10 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DM_AUDIO_RATE 48000
-/// Room for well over a frame of audio, so a late drain never loses samples.
-#define DM_AUDIO_BUFFER 4096
-
 struct DMCore {
     struct mCore* core;
     struct VFile* romFile;
