@@ -408,13 +408,19 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
 
     private func formatPhaseProbe() -> String {
         var hits: [String] = []
-        // EWRAM is 256KB; readMemory caps at 64KB per call, so this covers it
-        // in four chunks.
-        let chunkSize = 0x10000
-        for chunkIndex in 0..<4 {
-            let base = UInt32(0x0200_0000 + chunkIndex * chunkSize)
-            let chunk = core.readMemory(base, count: chunkSize)
-            guard chunk.count == chunkSize else { continue }
+        // EWRAM (0x0200_0000, 256KB — readMemory caps at 64KB/call, so 4
+        // chunks) and IWRAM (0x0300_0000, 32KB, 1 chunk). Everything found so
+        // far (gBattleMainFunc, gBattlerControllerFuncs, gMultiUsePlayerCursor)
+        // has been in IWRAM, not EWRAM as first assumed — scanning both this
+        // time instead of guessing again.
+        let regions: [(base: UInt32, size: Int)] = [
+            (0x0200_0000, 0x1_0000), (0x0201_0000, 0x1_0000),
+            (0x0202_0000, 0x1_0000), (0x0203_0000, 0x1_0000),
+            (0x0300_0000, 0x8000),
+        ]
+        for region in regions {
+            let chunk = core.readMemory(region.base, count: region.size)
+            guard chunk.count == region.size else { continue }
             for (name, target) in Self.phaseProbeTargets {
                 var offset = 0
                 while offset + 4 <= chunk.count {
@@ -423,13 +429,13 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                         | (UInt32(chunk[offset + 2]) << 16)
                         | (UInt32(chunk[offset + 3]) << 24)
                     if word == target {
-                        hits.append(String(format: "%@@%08X", name, base + UInt32(offset)))
+                        hits.append(String(format: "%@@%08X", name, region.base + UInt32(offset)))
                     }
                     offset += 4
                 }
             }
         }
-        return "SCAN " + (hits.isEmpty ? "no matches in EWRAM" : hits.joined(separator: "  "))
+        return "SCAN " + (hits.isEmpty ? "no matches" : hits.joined(separator: "  "))
     }
 
     /// Read the video, timer, DMA and interrupt registers straight out of
