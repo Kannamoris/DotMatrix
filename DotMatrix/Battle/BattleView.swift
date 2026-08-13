@@ -153,6 +153,18 @@ enum BattleAction: CaseIterable {
         case .run: return .gray
         }
     }
+
+    /// Position in the game's own 2x2 action grid (top-left to bottom-right),
+    /// confirmed directly from HandleInputChooseAction in
+    /// battle_controller_player.c — not this app's own layout choice.
+    var slotIndex: Int {
+        switch self {
+        case .fight: return 0
+        case .bag: return 1
+        case .pokemon: return 2
+        case .run: return 3
+        }
+    }
 }
 
 /// Where the battlefield sits within the emulated screen, and how it is scaled.

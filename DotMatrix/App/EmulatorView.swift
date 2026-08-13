@@ -161,24 +161,33 @@ private struct RunningSessionView: View {
         let isLandscape = verticalSizeClass == .compact
 
         ZStack {
-            if isLandscape {
-                // Controls flank the screen rather than sitting under it.
-                display
-                    .padding(.vertical, 8)
+            if session.battleState.isActive {
+                BattleView(
+                    session: session,
+                    state: session.battleState,
+                    onSelectMove: { session.selectBattleSlot($0) },
+                    onSelectAction: { session.selectBattleSlot($0.slotIndex) }
+                )
             } else {
-                VStack(spacing: 0) {
+                if isLandscape {
+                    // Controls flank the screen rather than sitting under it.
                     display
-                        .padding(.top, 8)
-                    Spacer(minLength: 0)
+                        .padding(.vertical, 8)
+                } else {
+                    VStack(spacing: 0) {
+                        display
+                            .padding(.top, 8)
+                        Spacer(minLength: 0)
+                    }
                 }
-            }
 
-            Gamepad(
-                onButtonsChanged: { session.setButtons($0) },
-                hapticsEnabled: settings.haptics
-            )
-            .ignoresSafeArea(.container, edges: .bottom)
-            .allowsHitTesting(!session.isPaused)
+                Gamepad(
+                    onButtonsChanged: { session.setButtons($0) },
+                    hapticsEnabled: settings.haptics
+                )
+                .ignoresSafeArea(.container, edges: .bottom)
+                .allowsHitTesting(!session.isPaused)
+            }
 
             if session.isPaused {
                 pauseOverlay

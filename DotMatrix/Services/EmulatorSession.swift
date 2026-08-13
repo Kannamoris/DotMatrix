@@ -29,6 +29,10 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var stateMessage: String?
     @Published private(set) var hasSnapshot = false
 
+    /// Sampled from emulated memory every frame; `.inactive` outside a battle.
+    /// See `MemoryBattleStateReader` for how the addresses were found.
+    @Published private(set) var battleState: BattleState = .inactive
+
     let displayTitle: String
     let contentID: String
     let screenWidth: Int
@@ -39,6 +43,18 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     private let audio = AudioEngine()
     private let saves = SaveManager()
     private let states = StateManager()
+    private let battleReader: any BattleStateReading = MemoryBattleStateReader(addresses: .verified)
+
+    /// A single synthesized button press, held then released so the game
+    /// sees a clean edge — its menu input reacts to a newly-pressed button,
+    /// not a held one. Frame counts are generous by design: this can't be
+    /// tuned against a real device from here, so it favors reliability over
+    /// speed.
+    private struct QueuedInput {
+        var buttons: GBAButtons
+        var remainingFrames: Int
+    }
+    private static let syntheticPressFrames = 3
 
     private struct ControlState {
         var running = false
@@ -52,6 +68,9 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         var buttons = GBAButtons()
         /// Counts transitions from nothing-held to something-held.
         var pressCount = 0
+        /// Synthesized battle-menu input in flight; takes over from `buttons`
+        /// until drained. See `selectBattleSlot`.
+        var inputQueue: [QueuedInput] = []
     }
 
     private let control = OSAllocatedUnfairLock(initialState: ControlState())
@@ -75,11 +94,18 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         saves.load(into: core, contentID: contentID)
         audio.attach(core: core)
         hasSnapshot = states.hasState(for: contentID)
+
+        let textReader = CartridgeTextReader(core: core, tables: .verified)
+        MoveNameCache.shared.attach(textReader)
+        TypeNameCache.shared.attach(textReader)
     }
 
     deinit {
         // Belt and braces: never leave the thread spinning on a dropped session.
         control.withLock { $0.running = false }
+        // Don't leave the caches holding a reader over a core that's going away.
+        MoveNameCache.shared.attach(nil)
+        TypeNameCache.shared.attach(nil)
     }
 
     // MARK: Lifecycle
@@ -203,6 +229,49 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Drive the native battle-menu cursor to `slot` (0-3, the FIGHT/BAG/
+    /// POKEMON/RUN or move grid, top-left to bottom-right) and confirm it.
+    ///
+    /// Works regardless of where the cursor currently sits: pret's own
+    /// handlers gate each toggle by which side the cursor is already on (a
+    /// left press when already on the left column is a no-op — confirmed
+    /// directly from HandleInputChooseAction/HandleInputChooseMove in
+    /// battle_controller_player.c), so one horizontal press and one vertical
+    /// press always land on the target regardless of the starting slot.
+    /// That's also why this doesn't need to know the cursor's current
+    /// position, which isn't available — no verified address exists for it.
+    func selectBattleSlot(_ slot: Int) {
+        guard (0..<4).contains(slot) else { return }
+        let horizontal: GBAButtons = slot % 2 == 0 ? .left : .right
+        let vertical: GBAButtons = slot < 2 ? .up : .down
+        enqueueSyntheticInput([horizontal, vertical, .a])
+    }
+
+    private func enqueueSyntheticInput(_ presses: [GBAButtons]) {
+        var queue: [QueuedInput] = []
+        for buttons in presses {
+            queue.append(QueuedInput(buttons: buttons, remainingFrames: Self.syntheticPressFrames))
+            queue.append(QueuedInput(buttons: [], remainingFrames: Self.syntheticPressFrames))
+        }
+        control.withLock { $0.inputQueue = queue }
+    }
+
+    /// Synthesized input, when any is queued, takes over from live touch
+    /// input entirely for that frame — the two shouldn't be blended, and
+    /// BattleView doesn't show the touch gamepad while its own controls are
+    /// live, so there's nothing for it to conflict with in practice.
+    private func nextFrameButtons(liveButtons: GBAButtons) -> GBAButtons {
+        control.withLock {
+            guard !$0.inputQueue.isEmpty else { return liveButtons }
+            let buttons = $0.inputQueue[0].buttons
+            $0.inputQueue[0].remainingFrames -= 1
+            if $0.inputQueue[0].remainingFrames <= 0 {
+                $0.inputQueue.removeFirst()
+            }
+            return buttons
+        }
+    }
+
     // MARK: Frame handoff
 
     /// Copy the newest frame into `destination`. Called on the render thread.
@@ -232,6 +301,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         var framesThisSecond = 0
         var secondMarker = CFAbsoluteTimeGetCurrent()
         var lastSaveCheck = secondMarker
+        var lastPublishedBattleState = BattleState.inactive
         // Isolates the core's own cost from pacing sleeps and frame handoff,
         // so a slow device and a slow core don't look the same in the overlay.
         var runFrameSeconds: Double = 0
@@ -299,13 +369,21 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                 }
             }
 
-            core.setButtons(state.buttons)
+            core.setButtons(nextFrameButtons(liveButtons: state.buttons))
             let frameStart = CFAbsoluteTimeGetCurrent()
             core.runFrame()
             let runFrameEnd = CFAbsoluteTimeGetCurrent()
             runFrameSeconds += runFrameEnd - frameStart
             publishFrame()
             publishSeconds += CFAbsoluteTimeGetCurrent() - runFrameEnd
+
+            let newBattleState = battleReader.sample(core)
+            if newBattleState != lastPublishedBattleState {
+                lastPublishedBattleState = newBattleState
+                DispatchQueue.main.async { [weak self] in
+                    self?.battleState = newBattleState
+                }
+            }
 
             framesThisSecond += 1
             let now = CFAbsoluteTimeGetCurrent()
@@ -345,7 +423,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                                         core.queuedAudioFrameCount, targetQueuedFrames,
                                         audio.underrunCount, currentAudioRate)
                 audio.resetUnderrunCount()
-                let diagnostics = [perf, audioLine, formatBuildDiagnostics(), formatPhaseProbe(), formatVideoDiagnostics()]
+                let diagnostics = [perf, audioLine, formatBuildDiagnostics(), formatVideoDiagnostics()]
                     .joined(separator: "\n")
                 let input = formatInputDiagnostics(state.buttons, presses: state.pressCount)
                 DispatchQueue.main.async { [weak self] in
@@ -379,63 +457,6 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         let config = "Release"
         #endif
         return "BUILD v\(version) (\(build)) \(config)  core mGBA  rom \(core.displayTitle)"
-    }
-
-    /// TEMPORARY scaffolding, round 2. Round 1 (IWRAM scan for
-    /// HandleInputChooseAction / HandleInputChooseMove) confirmed
-    /// gBattlerControllerFuncs[0] = 0x03005D60 — that's done and gets wired in
-    /// properly once this round finishes.
-    ///
-    /// What's left: a battle can legitimately have gBattleTypeFlags == 0 (a
-    /// plain wild encounter sets no flags — confirmed straight from
-    /// battle_setup.c), so it can't tell "no battle" from "wild battle" and
-    /// isn't safe to use for BattleState.isActive. The reliable signal for
-    /// "which top-level mode is the game in at all" is gMain.callback2, which
-    /// is BattleMainCB2 throughout an active battle and something else (an
-    /// overworld callback) otherwise — but gMain's address isn't public
-    /// either. Same fix as round 1: scan for the known callback *values*
-    /// instead of guessing gMain's address. This scans EWRAM (where big
-    /// global structs like gMain live) for BattleMainCB2/CB2_InitBattle while
-    /// a battle should be active, and CB2_Overworld/CB2_OverworldBasic while
-    /// walking around outside one — comparing the two tells us both gMain's
-    /// address and which callback is the right one to check.
-    private static let phaseProbeTargets: [(name: String, value: UInt32)] = [
-        ("battle=BattleMainCB2", 0x08038421),
-        ("battle=CB2_InitBattle", 0x08036761),
-        ("overworld=CB2_Overworld", 0x08085E5D),
-        ("overworld=CB2_OverworldBasic", 0x08085E51),
-    ]
-
-    private func formatPhaseProbe() -> String {
-        var hits: [String] = []
-        // EWRAM (0x0200_0000, 256KB — readMemory caps at 64KB/call, so 4
-        // chunks) and IWRAM (0x0300_0000, 32KB, 1 chunk). Everything found so
-        // far (gBattleMainFunc, gBattlerControllerFuncs, gMultiUsePlayerCursor)
-        // has been in IWRAM, not EWRAM as first assumed — scanning both this
-        // time instead of guessing again.
-        let regions: [(base: UInt32, size: Int)] = [
-            (0x0200_0000, 0x1_0000), (0x0201_0000, 0x1_0000),
-            (0x0202_0000, 0x1_0000), (0x0203_0000, 0x1_0000),
-            (0x0300_0000, 0x8000),
-        ]
-        for region in regions {
-            let chunk = core.readMemory(region.base, count: region.size)
-            guard chunk.count == region.size else { continue }
-            for (name, target) in Self.phaseProbeTargets {
-                var offset = 0
-                while offset + 4 <= chunk.count {
-                    let word = UInt32(chunk[offset])
-                        | (UInt32(chunk[offset + 1]) << 8)
-                        | (UInt32(chunk[offset + 2]) << 16)
-                        | (UInt32(chunk[offset + 3]) << 24)
-                    if word == target {
-                        hits.append(String(format: "%@@%08X", name, region.base + UInt32(offset)))
-                    }
-                    offset += 4
-                }
-            }
-        }
-        return "SCAN " + (hits.isEmpty ? "no matches" : hits.joined(separator: "  "))
     }
 
     /// Read the video, timer, DMA and interrupt registers straight out of
