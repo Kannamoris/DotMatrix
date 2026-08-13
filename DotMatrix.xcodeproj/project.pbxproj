@@ -188,6 +188,10 @@
 					"HAVE_SNPRINTF_L=1",
 					"HAVE_STRTOF_L=1",
 					"BUILD_STATIC=1",
+					"ENABLE_VFS=1",
+					"ENABLE_VFS_FILE=1",
+					"ENABLE_VFS_FD=1",
+					"ENABLE_DIRECTORIES=1",
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/DotMatrix/mGBA/include",
@@ -237,6 +241,10 @@
 					"HAVE_SNPRINTF_L=1",
 					"HAVE_STRTOF_L=1",
 					"BUILD_STATIC=1",
+					"ENABLE_VFS=1",
+					"ENABLE_VFS_FILE=1",
+					"ENABLE_VFS_FD=1",
+					"ENABLE_DIRECTORIES=1",
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/DotMatrix/mGBA/include",
