@@ -31,9 +31,20 @@ final class GBABus: ARMBus {
     private var openBus: UInt32 = 0
 
     /// Last opcode fetched from BIOS. Reads of the BIOS region from outside it
-    /// return this rather than memory. The initial value is what the real BIOS
-    /// leaves latched once it hands control to the cartridge.
-    private var lastBIOSFetch: UInt32 = 0xE129_F000
+    /// return this rather than memory.
+    ///
+    /// The BIOS isn't executed here — its routines are implemented directly —
+    /// so the latch is set explicitly at the points where real hardware would
+    /// have changed it. Games probe this to detect emulators, and the three
+    /// values below are the ones left after startup, after a SWI and after an
+    /// interrupt respectively.
+    private var lastBIOSFetch: UInt32 = BIOSLatch.afterStartup
+
+    private enum BIOSLatch {
+        static let afterStartup: UInt32 = 0xE129_F000
+        static let afterSWI: UInt32 = 0xE3A0_2004
+        static let afterIRQ: UInt32 = 0xE25E_F004   // SUBS PC, LR, #4
+    }
 
     private(set) var totalCycles = 0
 
@@ -222,11 +233,6 @@ final class GBABus: ARMBus {
         value |= UInt32(readByte(aligned &+ 2)) << 16
         value |= UInt32(readByte(aligned &+ 3)) << 24
         openBus = value
-        // While the CPU is running from BIOS, remember what it fetched: reads
-        // of the BIOS region from elsewhere return that, not memory contents.
-        if aligned < 0x4000, let cpu, cpu.pc < 0x4000 {
-            lastBIOSFetch = value
-        }
         return value
     }
 
@@ -310,11 +316,24 @@ final class GBABus: ARMBus {
 
     func write16(_ address: UInt32, _ value: UInt16, sequential: Bool) {
         tick(waitCycles(for: address, width: 2, sequential: sequential))
+        if isEightBitBus(address) {
+            // One byte reaches the chip, selected by the address's low bit —
+            // the value rotated right by 8 bits per byte of misalignment — and
+            // it lands at the unaligned address, not the aligned one.
+            let byte = UInt8((value >> (8 * UInt16(address & 1))) & 0xFF)
+            cartridge.backup.write(address & 0xFFFF, byte)
+            return
+        }
         writeHalf(address & ~1, value)
     }
 
     func write32(_ address: UInt32, _ value: UInt32, sequential: Bool) {
         tick(waitCycles(for: address, width: 4, sequential: sequential))
+        if isEightBitBus(address) {
+            let byte = UInt8((value >> (8 * (address & 3))) & 0xFF)
+            cartridge.backup.write(address & 0xFFFF, byte)
+            return
+        }
         let aligned = address & ~3
         writeHalf(aligned, UInt16(value & 0xFFFF))
         writeHalf(aligned &+ 2, UInt16(value >> 16))
@@ -522,11 +541,19 @@ final class GBABus: ARMBus {
         }
     }
 
+    func noteInterruptDispatch() {
+        lastBIOSFetch = BIOSLatch.afterIRQ
+    }
+
     // MARK: BIOS calls
 
     /// The BIOS routines, implemented directly rather than run from Nintendo's
     /// image. Emerald leans on the decompression and memory-copy calls heavily.
     func handleSWI(comment: UInt32, cpu: ARM7TDMI) -> Bool {
+        // Real hardware would be executing BIOS code here, which leaves a
+        // different opcode latched than the one from startup.
+        lastBIOSFetch = BIOSLatch.afterSWI
+
         switch comment {
         case 0x00:  // SoftReset
             cpu.reset(entryPoint: 0x0800_0000)

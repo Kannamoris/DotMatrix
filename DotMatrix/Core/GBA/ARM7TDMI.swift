@@ -19,6 +19,10 @@ protocol ARMBus: AnyObject {
     /// Handle a BIOS software interrupt without the real BIOS image.
     /// Returns false if the call should fall through to a real BIOS vector.
     func handleSWI(comment: UInt32, cpu: ARM7TDMI) -> Bool
+
+    /// An interrupt is being dispatched. Lets the bus track the BIOS state that
+    /// games can observe by reading the BIOS region.
+    func noteInterruptDispatch()
 }
 
 /// Processor operating modes. The low five bits of CPSR.
@@ -233,6 +237,7 @@ final class ARM7TDMI {
     }
 
     private func raiseIRQ() {
+        bus.noteInterruptDispatch()
         // IRQ returns to the instruction after the interrupted one, plus the
         // pipeline offset the hardware would have had in LR.
         enterException(.irq, mode: .irq, returnOffset: thumb ? 4 : 4)

@@ -271,7 +271,7 @@ extension ARM7TDMI {
             if isByte {
                 registers[rd] = UInt32(bus.read8(address, sequential: false))
             } else {
-                let word = bus.read32(address & ~3, sequential: false)
+                let word = bus.read32(address, sequential: false)
                 let rotation = (address & 3) * 8
                 registers[rd] = rotation == 0 ? word : (word >> rotation) | (word << (32 - rotation))
             }
@@ -280,7 +280,7 @@ extension ARM7TDMI {
             if isByte {
                 bus.write8(address, UInt8(registers[rd] & 0xFF), sequential: false)
             } else {
-                bus.write32(address & ~3, registers[rd], sequential: false)
+                bus.write32(address, registers[rd], sequential: false)
             }
         }
     }
@@ -298,9 +298,9 @@ extension ARM7TDMI {
 
         switch (signExtend, hFlag) {
         case (false, false):  // STRH
-            bus.write16(address & ~1, UInt16(registers[rd] & 0xFFFF), sequential: false)
+            bus.write16(address, UInt16(registers[rd] & 0xFFFF), sequential: false)
         case (false, true):   // LDRH
-            let half = bus.read16(address & ~1, sequential: false)
+            let half = bus.read16(address, sequential: false)
             registers[rd] = (address & 1) != 0
                 ? UInt32(half) >> 8 | UInt32(half) << 24
                 : UInt32(half)
@@ -337,7 +337,7 @@ extension ARM7TDMI {
             if isByte {
                 registers[rd] = UInt32(bus.read8(address, sequential: false))
             } else {
-                let word = bus.read32(address & ~3, sequential: false)
+                let word = bus.read32(address, sequential: false)
                 let rotation = (address & 3) * 8
                 registers[rd] = rotation == 0 ? word : (word >> rotation) | (word << (32 - rotation))
             }
@@ -346,7 +346,7 @@ extension ARM7TDMI {
             if isByte {
                 bus.write8(address, UInt8(registers[rd] & 0xFF), sequential: false)
             } else {
-                bus.write32(address & ~3, registers[rd], sequential: false)
+                bus.write32(address, registers[rd], sequential: false)
             }
         }
     }
@@ -362,13 +362,13 @@ extension ARM7TDMI {
         let address = registers[rb] &+ offset
 
         if isLoad {
-            let half = bus.read16(address & ~1, sequential: false)
+            let half = bus.read16(address, sequential: false)
             registers[rd] = (address & 1) != 0
                 ? UInt32(half) >> 8 | UInt32(half) << 24
                 : UInt32(half)
             bus.idle(1)
         } else {
-            bus.write16(address & ~1, UInt16(registers[rd] & 0xFFFF), sequential: false)
+            bus.write16(address, UInt16(registers[rd] & 0xFFFF), sequential: false)
         }
     }
 
@@ -382,12 +382,12 @@ extension ARM7TDMI {
         let address = registers[13] &+ offset
 
         if isLoad {
-            let word = bus.read32(address & ~3, sequential: false)
+            let word = bus.read32(address, sequential: false)
             let rotation = (address & 3) * 8
             registers[rd] = rotation == 0 ? word : (word >> rotation) | (word << (32 - rotation))
             bus.idle(1)
         } else {
-            bus.write32(address & ~3, registers[rd], sequential: false)
+            bus.write32(address, registers[rd], sequential: false)
         }
     }
 
@@ -433,7 +433,7 @@ extension ARM7TDMI {
             var address = registers[13]
             var sequential = false
             for register in transferred {
-                let value = bus.read32(address & ~3, sequential: sequential)
+                let value = bus.read32(address, sequential: sequential)
                 if register == 15 {
                     // POP {PC} does not interwork on ARMv4T: PC is loaded and
                     // the core stays in Thumb regardless of bit 0. Only BX
@@ -458,7 +458,7 @@ extension ARM7TDMI {
             registers[13] = address
             var sequential = false
             for register in transferred.sorted() {
-                bus.write32(address & ~3, registers[register], sequential: sequential)
+                bus.write32(address, registers[register], sequential: sequential)
                 address = address &+ 4
                 sequential = true
             }
@@ -477,14 +477,14 @@ extension ARM7TDMI {
         // As in ARM, an empty list transfers PC and bumps the base by 0x40.
         if list == 0 {
             if isLoad {
-                let value = bus.read32(address & ~3, sequential: false)
+                let value = bus.read32(address, sequential: false)
                 pc = value & ~1
                 branched = true
             } else {
                 // The stored PC is the pipeline-visible value plus one more
                 // instruction: +4 for the Thumb read, +2 for the instruction
                 // width. This mirrors ARM, where the same case stores pc+12.
-                bus.write32(address & ~3, pc &+ 6, sequential: false)
+                bus.write32(address, pc &+ 6, sequential: false)
             }
             registers[rb] = address &+ 0x40
             return
@@ -496,14 +496,14 @@ extension ARM7TDMI {
         var sequential = false
         for register in transferred {
             if isLoad {
-                registers[register] = bus.read32(address & ~3, sequential: sequential)
+                registers[register] = bus.read32(address, sequential: sequential)
             } else {
                 // Storing the base writes back the final value unless the base
                 // is the first register in the list.
                 let value = (register == rb && transferred.first != rb)
                     ? writeBackValue
                     : registers[register]
-                bus.write32(address & ~3, value, sequential: sequential)
+                bus.write32(address, value, sequential: sequential)
             }
             address = address &+ 4
             sequential = true

@@ -380,7 +380,7 @@ extension ARM7TDMI {
             } else {
                 // An unaligned word load rotates rather than faulting, which
                 // some code relies on deliberately.
-                let word = bus.read32(address & ~3, sequential: false)
+                let word = bus.read32(address, sequential: false)
                 let rotation = (address & 3) * 8
                 value = rotation == 0 ? word : (word >> rotation) | (word << (32 - rotation))
             }
@@ -398,7 +398,7 @@ extension ARM7TDMI {
             if isByte {
                 bus.write8(address, UInt8(value & 0xFF), sequential: false)
             } else {
-                bus.write32(address & ~3, value, sequential: false)
+                bus.write32(address, value, sequential: false)
             }
             if writeBack || !preIndexed {
                 writeRegister(rn, offsetAddress)
@@ -434,7 +434,7 @@ extension ARM7TDMI {
             let value: UInt32
             switch kind {
             case 1:  // LDRH — unsigned halfword, rotated if misaligned
-                let half = bus.read16(address & ~1, sequential: false)
+                let half = bus.read16(address, sequential: false)
                 value = (address & 1) != 0
                     ? UInt32(half) >> 8 | UInt32(half) << 24
                     : UInt32(half)
@@ -457,7 +457,7 @@ extension ARM7TDMI {
             bus.idle(1)
         } else {
             let value = rd == 15 ? pc &+ 12 : readRegister(rd)
-            bus.write16(address & ~1, UInt16(value & 0xFFFF), sequential: false)
+            bus.write16(address, UInt16(value & 0xFFFF), sequential: false)
             if writeBack || !preIndexed {
                 writeRegister(rn, offsetAddress)
             }
@@ -481,10 +481,10 @@ extension ARM7TDMI {
             bus.write8(address, UInt8(source & 0xFF), sequential: false)
             writeRegister(rd, UInt32(old))
         } else {
-            let word = bus.read32(address & ~3, sequential: false)
+            let word = bus.read32(address, sequential: false)
             let rotation = (address & 3) * 8
             let old = rotation == 0 ? word : (word >> rotation) | (word << (32 - rotation))
-            bus.write32(address & ~3, source, sequential: false)
+            bus.write32(address, source, sequential: false)
             writeRegister(rd, old)
         }
         bus.idle(1)
@@ -538,7 +538,7 @@ extension ARM7TDMI {
         var sequential = false
         for register in registers {
             if isLoad {
-                let value = bus.read32(address & ~3, sequential: sequential)
+                let value = bus.read32(address, sequential: sequential)
                 if register == 15 {
                     pc = value & ~3
                     branched = true
@@ -556,7 +556,7 @@ extension ARM7TDMI {
                 } else {
                     value = self.registers[register]
                 }
-                bus.write32(address & ~3, value, sequential: sequential)
+                bus.write32(address, value, sequential: sequential)
             }
             address = address &+ 4
             sequential = true
