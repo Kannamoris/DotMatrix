@@ -162,62 +162,75 @@ private struct RunningSessionView: View {
 
         ZStack {
             if session.battleState.isActive {
-                BattleView(
-                    session: session,
-                    state: session.battleState,
-                    onSelectMove: { session.selectBattleSlot($0) },
-                    onSelectAction: { session.selectBattleSlot($0.slotIndex) }
-                )
+                battle
             } else {
-                if isLandscape {
-                    // Controls flank the screen rather than sitting under it.
-                    display
-                        .padding(.vertical, 8)
-                } else {
-                    VStack(spacing: 0) {
-                        display
-                            .padding(.top, 8)
-                        Spacer(minLength: 0)
-                    }
-                }
-
-                Gamepad(
-                    onButtonsChanged: { session.setButtons($0) },
-                    hapticsEnabled: settings.haptics
-                )
-                .ignoresSafeArea(.container, edges: .bottom)
-                .allowsHitTesting(!session.isPaused)
+                gameplay(isLandscape: isLandscape)
             }
 
             if session.isPaused {
                 pauseOverlay
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                if settings.showFPS {
-                    HStack {
-                        Spacer()
-                        Text(String(format: "%.1f fps", session.measuredFPS))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
-                }
-                if settings.showVideoDiagnostics, !session.videoDiagnostics.isEmpty {
-                    Text(session.inputDiagnostics + "\n" + session.videoDiagnostics)
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.green.opacity(0.85))
-                        .padding(6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(.black.opacity(0.65))
-                        )
-                        .textSelection(.enabled)
-                }
-                Spacer()
-            }
-            .padding(8)
-            .allowsHitTesting(false)
+            diagnosticsOverlay
         }
+    }
+
+    private var battle: some View {
+        BattleView(
+            session: session,
+            state: session.battleState,
+            onSelectMove: { session.selectBattleSlot($0) },
+            onSelectAction: { session.selectBattleSlot($0.slotIndex) }
+        )
+    }
+
+    @ViewBuilder
+    private func gameplay(isLandscape: Bool) -> some View {
+        if isLandscape {
+            // Controls flank the screen rather than sitting under it.
+            display
+                .padding(.vertical, 8)
+        } else {
+            VStack(spacing: 0) {
+                display
+                    .padding(.top, 8)
+                Spacer(minLength: 0)
+            }
+        }
+
+        Gamepad(
+            onButtonsChanged: { session.setButtons($0) },
+            hapticsEnabled: settings.haptics
+        )
+        .ignoresSafeArea(.container, edges: .bottom)
+        .allowsHitTesting(!session.isPaused)
+    }
+
+    private var diagnosticsOverlay: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if settings.showFPS {
+                HStack {
+                    Spacer()
+                    Text(String(format: "%.1f fps", session.measuredFPS))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            if settings.showVideoDiagnostics, !session.videoDiagnostics.isEmpty {
+                Text(session.inputDiagnostics + "\n" + session.videoDiagnostics)
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.green.opacity(0.85))
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(.black.opacity(0.65))
+                    )
+                    .textSelection(.enabled)
+            }
+            Spacer()
+        }
+        .padding(8)
+        .allowsHitTesting(false)
     }
 
     private var display: some View {
