@@ -9,6 +9,8 @@ struct LibraryView: View {
     @State private var showImporter = false
     @State private var showSettings = false
     @State private var importMessage: String?
+    /// Set while confirming a save erase; erasing is irreversible.
+    @State private var pendingSaveDeletion: ROMEntry?
 
     private let saves = SaveManager()
 
@@ -55,6 +57,19 @@ struct LibraryView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView(settings: settings)
             }
+            .alert("Erase save data?", isPresented: Binding(
+                get: { pendingSaveDeletion != nil },
+                set: { if !$0 { pendingSaveDeletion = nil } }
+            ), presenting: pendingSaveDeletion) { entry in
+                Button("Erase", role: .destructive) {
+                    saves.deleteSave(for: entry.id)
+                    pendingSaveDeletion = nil
+                    library.reload()
+                }
+                Button("Cancel", role: .cancel) { pendingSaveDeletion = nil }
+            } message: { entry in
+                Text("This permanently deletes the in-game save for \(entry.title), including its clock data. There is no undo.")
+            }
             .alert("Import failed", isPresented: Binding(
                 get: { importMessage != nil },
                 set: { if !$0 { importMessage = nil } }
@@ -81,10 +96,18 @@ struct LibraryView: View {
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
+                        if saves.hasSave(for: entry.id) {
+                            Button {
+                                pendingSaveDeletion = entry
+                            } label: {
+                                Label("Erase Save", systemImage: "clock.arrow.circlepath")
+                            }
+                            .tint(.orange)
+                        }
                     }
                 }
             } footer: {
-                Text("Removing a cartridge leaves its save file in place.")
+                Text("Swipe a cartridge for options. Removing it leaves the save in place; erasing the save cannot be undone.")
             }
         }
         .refreshable {
