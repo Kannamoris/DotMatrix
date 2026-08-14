@@ -129,6 +129,11 @@ struct BattleView: View {
         .disabled(!state.acceptsInput)
     }
 
+    private var opponentTypes: [Int] {
+        guard let opponent = state.opponent else { return [] }
+        return [opponent.primaryType] + (opponent.secondaryType.map { [$0] } ?? [])
+    }
+
     @ViewBuilder
     private func moveCell(index: Int) -> some View {
         if let move = state.moves[safe: index] {
@@ -136,6 +141,7 @@ struct BattleView: View {
             MoveCell(
                 move: move,
                 isSelected: index == state.cursorIndex,
+                defenderTypes: opponentTypes,
                 action: { onSelectMove(index) }
             )
             .disabled(!enabled)
@@ -317,7 +323,14 @@ private struct HealthBar: View {
 private struct MoveCell: View {
     let move: BattleState.Move
     let isSelected: Bool
+    /// The opposing Pokémon's type(s), for the effectiveness indicator.
+    /// Empty when there's no opponent to check against.
+    let defenderTypes: [Int]
     let action: () -> Void
+
+    private var effectivenessMultiplier: Double {
+        TypeEffectiveness.multiplier(moveType: move.type, defenderTypes: defenderTypes)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -336,6 +349,11 @@ private struct MoveCell: View {
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(TypeNameCache.shared.colour(for: move.type))
                             )
+                    }
+                    // Only shown when it isn't neutral — the real game only
+                    // calls out effectiveness when it deviates from normal.
+                    if let label = TypeEffectiveness.label(for: effectivenessMultiplier) {
+                        Gen3Label(text: label, scale: 1, color: TypeEffectiveness.color(for: effectivenessMultiplier))
                     }
                     Spacer(minLength: 0)
                     Gen3Label(
