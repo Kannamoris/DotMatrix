@@ -179,7 +179,8 @@ private struct RunningSessionView: View {
             state: session.battleState,
             onSelectMove: { session.selectBattleSlot($0) },
             onSelectAction: { session.selectBattleSlot($0.slotIndex) },
-            onAdvance: { session.advanceBattleText() }
+            onAdvance: { session.advanceBattleText() },
+            onCancelMove: { session.cancelMoveSelection() }
         )
     }
 

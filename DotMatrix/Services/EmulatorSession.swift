@@ -259,6 +259,15 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         enqueueSyntheticInput([.a])
     }
 
+    /// A single B press — in the real menu this backs out of move selection
+    /// to the action menu without choosing a move (HandleInputChooseMove
+    /// reads B the same way). The custom move grid replaces that menu but
+    /// had no equivalent control, so there was no way to back out of it once
+    /// opened short of picking a move.
+    func cancelMoveSelection() {
+        enqueueSyntheticInput([.b])
+    }
+
     private func enqueueSyntheticInput(_ presses: [GBAButtons]) {
         var queue: [QueuedInput] = []
         for buttons in presses {

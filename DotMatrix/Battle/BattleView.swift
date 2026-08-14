@@ -21,6 +21,9 @@ struct BattleView: View {
     /// else where the game is just waiting for acknowledgement rather than a
     /// menu choice.
     var onAdvance: () -> Void
+    /// A single B press — backs out of move selection to the action menu,
+    /// same as the real menu, without choosing a move.
+    var onCancelMove: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -98,14 +101,32 @@ struct BattleView: View {
     }
 
     private var moveGrid: some View {
-        GBAWindowBox {
-            VStack(spacing: 0) {
-                windowRow(moveCell(index: 0), moveCell(index: 1))
-                windowDivider(vertical: false)
-                windowRow(moveCell(index: 2), moveCell(index: 3))
+        HStack(spacing: 8) {
+            backButton
+            GBAWindowBox {
+                VStack(spacing: 0) {
+                    windowRow(moveCell(index: 0), moveCell(index: 1))
+                    windowDivider(vertical: false)
+                    windowRow(moveCell(index: 2), moveCell(index: 3))
+                }
             }
         }
         .frame(height: 132)
+    }
+
+    /// The touch equivalent of pressing B during move selection — there's no
+    /// on-screen gamepad during battle (this grid replaces it), so without
+    /// this there was no way to back out of move selection short of picking
+    /// a move.
+    private var backButton: some View {
+        Button(action: onCancelMove) {
+            Image(systemName: "chevron.left")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Color.white.opacity(0.15)))
+        }
+        .disabled(!state.acceptsInput)
     }
 
     @ViewBuilder
