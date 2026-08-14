@@ -93,36 +93,70 @@ struct BattleView: View {
     }
 
     private var moveGrid: some View {
-        LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-            spacing: 10
-        ) {
-            ForEach(Array(state.moves.enumerated()), id: \.offset) { index, move in
-                MoveButton(move: move, isSelected: index == state.cursorIndex) {
-                    onSelectMove(index)
-                }
-                .disabled(!state.acceptsInput || !move.isUsable)
+        GBAWindowBox {
+            VStack(spacing: 0) {
+                windowRow(moveCell(index: 0), moveCell(index: 1))
+                windowDivider(vertical: false)
+                windowRow(moveCell(index: 2), moveCell(index: 3))
             }
+        }
+        .frame(height: 132)
+    }
+
+    @ViewBuilder
+    private func moveCell(index: Int) -> some View {
+        if let move = state.moves[safe: index] {
+            let enabled = state.acceptsInput && move.isUsable
+            MoveCell(
+                move: move,
+                isSelected: index == state.cursorIndex,
+                action: { onSelectMove(index) }
+            )
+            .disabled(!enabled)
+            .opacity(enabled ? 1 : 0.5)
+        } else {
+            Color.clear
         }
     }
 
     private var actionGrid: some View {
-        LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-            spacing: 10
-        ) {
-            ForEach(BattleAction.allCases, id: \.self) { action in
-                Button {
-                    onSelectAction(action)
-                } label: {
-                    Gen3Label(text: action.title, scale: 2)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(action.tint)
-                .disabled(!state.acceptsInput)
+        GBAWindowBox {
+            VStack(spacing: 0) {
+                windowRow(actionCell(.fight), actionCell(.bag))
+                windowDivider(vertical: false)
+                windowRow(actionCell(.pokemon), actionCell(.run))
             }
         }
+        .frame(height: 120)
+    }
+
+    private func actionCell(_ action: BattleAction) -> some View {
+        Button {
+            onSelectAction(action)
+        } label: {
+            Gen3Label(text: action.title, scale: 2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .buttonStyle(WindowCellButtonStyle())
+        .disabled(!state.acceptsInput)
+        .opacity(state.acceptsInput ? 1 : 0.5)
+    }
+
+    /// Two cells side by side with the vertical divider the game's own
+    /// menu boxes draw between quadrants.
+    private func windowRow(_ left: some View, _ right: some View) -> some View {
+        HStack(spacing: 0) {
+            left
+            windowDivider(vertical: true)
+            right
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func windowDivider(vertical: Bool) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.5))
+            .frame(width: vertical ? 2 : nil, height: vertical ? nil : 2)
     }
 
     private var waitingIndicator: some View {
@@ -134,15 +168,46 @@ struct BattleView: View {
         Button(action: onAdvance) {
             HStack(spacing: 8) {
                 Image(systemName: "hand.tap")
-                    .foregroundStyle(.secondary)
-                Text("Tap to continue")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.7))
+                Gen3Label(text: "TAP TO CONTINUE", scale: 1, color: .white.opacity(0.7))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A GBA menu window: rounded box, blue gradient fill, white border — the
+/// game's own look for its action/move menus, reused here as the container
+/// for this app's native replacements so they read as part of the same UI
+/// rather than an iOS control sitting on top of it.
+private struct GBAWindowBox<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .background(
+                LinearGradient(
+                    colors: [Color(red: 0.42, green: 0.58, blue: 0.86), Color(red: 0.14, green: 0.22, blue: 0.52)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white, lineWidth: 3))
+    }
+}
+
+/// Pressed state darkens the cell instead of the system's default highlight,
+/// matching a menu cursor landing on an option rather than an iOS button tap.
+private struct WindowCellButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color.black.opacity(0.25) : Color.clear)
     }
 }
 
@@ -158,15 +223,6 @@ enum BattleAction: CaseIterable {
         case .bag: return "BAG"
         case .pokemon: return "POKEMON"
         case .run: return "RUN"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .fight: return .red
-        case .bag: return .orange
-        case .pokemon: return .green
-        case .run: return .gray
         }
     }
 
@@ -224,36 +280,33 @@ private struct HealthBar: View {
     }
 
     var body: some View {
-        VStack(alignment: alignment, spacing: 4) {
+        VStack(alignment: alignment, spacing: 3) {
             HStack(spacing: 6) {
-                Text(combatant.nickname)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text("Lv\(combatant.level)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                Gen3Label(text: combatant.nickname, scale: 1)
+                Gen3Label(text: "LV\(combatant.level)", scale: 1, color: .white.opacity(0.7))
             }
 
+            // A rectangular, black-bordered bar rather than an iOS Capsule —
+            // the game's own HP gauge is square-cornered, not pill-shaped.
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 2).fill(Color.black.opacity(0.6))
+                    RoundedRectangle(cornerRadius: 2)
                         .fill(tint)
-                        .frame(width: geometry.size.width * combatant.hpFraction)
+                        .frame(width: max(2, geometry.size.width * combatant.hpFraction))
                 }
+                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(.black, lineWidth: 1))
             }
             .frame(height: 8)
             .animation(.easeOut(duration: 0.25), value: combatant.currentHP)
 
-            Text("\(combatant.currentHP)/\(combatant.maxHP)")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+            Gen3Label(text: "\(combatant.currentHP)/\(combatant.maxHP)", scale: 1, color: .white.opacity(0.7))
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
     }
 }
 
-private struct MoveButton: View {
+private struct MoveCell: View {
     let move: BattleState.Move
     let isSelected: Bool
     let action: () -> Void
@@ -261,42 +314,44 @@ private struct MoveButton: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 4) {
-                // The move's name comes from the cartridge at display time.
-                Text(MoveNameCache.shared.name(for: move.moveID) ?? "Move \(move.moveID)")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                Gen3Label(
+                    text: MoveNameCache.shared.name(for: move.moveID) ?? "MOVE \(move.moveID)",
+                    scale: 1
+                )
 
                 HStack(spacing: 6) {
-                    TypeChip(type: move.type)
+                    if let typeName = TypeNameCache.shared.name(for: move.type) {
+                        Text(typeName.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(TypeNameCache.shared.colour(for: move.type))
+                            )
+                    }
                     Spacer(minLength: 0)
-                    Text("\(move.currentPP)/\(move.maxPP)")
-                        .font(.caption2.monospacedDigit())
-                        // Both branches must be the same ShapeStyle type; the
-                        // hierarchical styles and Color don't unify.
-                        .foregroundStyle(move.isUsable ? Color.secondary : Color.red)
+                    Gen3Label(
+                        text: "\(move.currentPP)/\(move.maxPP)",
+                        scale: 1,
+                        color: move.isUsable ? .white.opacity(0.8) : .red
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
+            .padding(8)
+            .frame(maxHeight: .infinity)
+            .background(isSelected ? Color.white.opacity(0.15) : Color.clear)
         }
-        .buttonStyle(.bordered)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
-        )
+        .buttonStyle(WindowCellButtonStyle())
     }
 }
 
-private struct TypeChip: View {
-    let type: Int
-
-    var body: some View {
-        Text(TypeNameCache.shared.name(for: type) ?? "—")
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule().fill(TypeNameCache.shared.colour(for: type).opacity(0.3))
-            )
+private extension Array {
+    /// `state.moves` can have fewer than 4 entries mid-battle-load; this
+    /// keeps the 2x2 grid from indexing past the end while it fills in.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
