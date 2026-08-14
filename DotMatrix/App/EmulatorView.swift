@@ -1,3 +1,4 @@
+import UIKit
 import SwiftUI
 
 /// The play screen: display, controls, and the pause overlay.
@@ -30,6 +31,12 @@ struct EmulatorView: View {
                     .tint(.white)
             }
         }
+        // The D-pad sits right at the left edge in landscape, and iOS's
+        // edge-swipe-to-go-back gesture lives in exactly that strip — a
+        // left-to-right drag meant for the D-pad was instead popping back
+        // to the library. The back button itself (toolbar, above) still
+        // works; this only disables the swipe.
+        .background(DisablesInteractivePopGesture())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // No title item: the ROM name added a solid black banner across
@@ -300,4 +307,32 @@ private struct PauseMenuButton: View {
                   systemImage: session.isPaused ? "play.fill" : "pause.fill")
         }
     }
+}
+
+/// Turns off the navigation stack's edge-swipe-to-go-back gesture for as
+/// long as this view is on screen. SwiftUI has no direct API for this —
+/// `interactivePopGestureRecognizer` is a UIKit-only knob on the navigation
+/// controller, reached here through an invisible view controller riding
+/// along in the background. Toggled on `viewWillAppear`/`viewWillDisappear`
+/// rather than once at creation, since the same navigation controller is
+/// shared with whatever's behind this screen and needs the gesture back
+/// once this one's gone.
+private struct DisablesInteractivePopGesture: UIViewControllerRepresentable {
+    final class GestureDisablingViewController: UIViewController {
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+        }
+    }
+
+    func makeUIViewController(context: Context) -> GestureDisablingViewController {
+        GestureDisablingViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: GestureDisablingViewController, context: Context) {}
 }
