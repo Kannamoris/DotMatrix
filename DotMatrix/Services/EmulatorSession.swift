@@ -98,6 +98,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         let textReader = CartridgeTextReader(core: core, tables: .verified)
         MoveNameCache.shared.attach(textReader)
         TypeNameCache.shared.attach(textReader)
+        Gen3FontCache.shared.attach(core)
     }
 
     deinit {
@@ -106,6 +107,7 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         // Don't leave the caches holding a reader over a core that's going away.
         MoveNameCache.shared.attach(nil)
         TypeNameCache.shared.attach(nil)
+        Gen3FontCache.shared.attach(nil)
     }
 
     // MARK: Lifecycle

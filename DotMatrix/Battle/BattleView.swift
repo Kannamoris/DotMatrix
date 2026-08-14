@@ -115,8 +115,7 @@ struct BattleView: View {
                 Button {
                     onSelectAction(action)
                 } label: {
-                    Text(action.title)
-                        .font(.headline)
+                    Gen3Label(text: action.title, scale: 2)
                         .frame(maxWidth: .infinity, minHeight: 52)
                 }
                 .buttonStyle(.borderedProminent)
@@ -151,12 +150,14 @@ struct BattleView: View {
 enum BattleAction: CaseIterable {
     case fight, bag, pokemon, run
 
+    /// The game's own labels, all caps — matches what's rendered with
+    /// Gen3Label now, so it should read exactly like the native menu.
     var title: String {
         switch self {
-        case .fight: return "Fight"
-        case .bag: return "Bag"
-        case .pokemon: return "Party"
-        case .run: return "Run"
+        case .fight: return "FIGHT"
+        case .bag: return "BAG"
+        case .pokemon: return "POKEMON"
+        case .run: return "RUN"
         }
     }
 

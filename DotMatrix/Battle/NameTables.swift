@@ -149,6 +149,22 @@ enum Gen3Text {
         return result.isEmpty ? nil : result
     }
 
+    /// For rendering arbitrary app-chosen text (button labels, and the like)
+    /// with the cartridge's own font glyphs. Case-insensitive: Gen 3's font
+    /// glyph IDs match its text encoding one-to-one, so this is just
+    /// `characterMap` inverted.
+    static func byte(for character: Character) -> UInt8? {
+        reverseCharacterMap[character]
+    }
+
+    private static let reverseCharacterMap: [Character: UInt8] = {
+        var map: [Character: UInt8] = [:]
+        for (byte, character) in characterMap where map[character] == nil {
+            map[character] = byte
+        }
+        return map
+    }()
+
     /// The subset of the cartridge's character set that appears in names:
     /// space, digits, letters and a few punctuation marks. This is a format
     /// mapping, not content.
