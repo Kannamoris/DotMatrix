@@ -31,18 +31,32 @@ struct EmulatorView: View {
                     .tint(.white)
             }
         }
-        // The D-pad sits right at the left edge in landscape, and iOS's
-        // edge-swipe-to-go-back gesture lives in exactly that strip — a
-        // left-to-right drag meant for the D-pad was instead popping back
-        // to the library. The back button itself (toolbar, above) still
-        // works; this only disables the swipe.
-        .background(DisablesInteractivePopGesture())
+        // The system back button and its interactive edge-swipe are tied
+        // together in NavigationStack — hiding the former also kills the
+        // latter, which is what's actually needed here: the D-pad sits at
+        // the left edge (in landscape) or spans much of the left side (in
+        // portrait), and a left-to-right drag meant for it was instead
+        // popping back to the library, triggering from anywhere on that
+        // side rather than just a narrow edge strip. That ruled out
+        // UIKit's interactivePopGestureRecognizer (an edge-only gesture)
+        // as the actual culprit — two attempts at disabling it directly had
+        // no effect, because NavigationStack's own interactive-dismiss
+        // gesture doesn't route through that property. A manual back
+        // button below replaces the hidden system one.
+        .navigationBarBackButtonHidden(true)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // No title item: the ROM name added a solid black banner across
             // the top of the screen for no benefit — the player already
             // knows what they're playing — so this now just leaves the back
             // button and the "..." menu floating over the black backdrop.
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let session {
@@ -306,73 +320,5 @@ private struct PauseMenuButton: View {
             Label(session.isPaused ? "Resume" : "Pause",
                   systemImage: session.isPaused ? "play.fill" : "pause.fill")
         }
-    }
-}
-
-/// Turns off the navigation stack's edge-swipe-to-go-back gesture for as
-/// long as this view is on screen. SwiftUI has no direct API for this —
-/// `interactivePopGestureRecognizer` is a UIKit-only knob on the navigation
-/// controller, reached here through an invisible view controller riding
-/// along in the background.
-///
-/// Just setting `isEnabled = false` once on appear turned out not to be
-/// enough on its own — something (most likely UIKit reconfiguring the
-/// gesture as part of the navigation bar/toolbar updates this screen makes
-/// frequently) was resetting it back to `true` before a real swipe. This
-/// backs that up with the gesture's own delegate refusing to let it begin
-/// at all, which is asked fresh on every touch rather than relying on a
-/// flag that can get flipped behind this view's back — and reasserts
-/// `isEnabled = false` again in `viewDidAppear`, after the navigation
-/// controller has finished setting up the push transition, not just in
-/// `viewWillAppear`, before it has.
-private struct DisablesInteractivePopGesture: UIViewControllerRepresentable {
-    final class GestureDisablingViewController: UIViewController, UIGestureRecognizerDelegate {
-        /// Whatever delegate (if any) the gesture had before this view
-        /// showed up — restored on the way out rather than clobbered, since
-        /// the same navigation controller and gesture recognizer are shared
-        /// with whatever's behind this screen.
-        private var originalDelegate: UIGestureRecognizerDelegate?
-        private var didCaptureOriginalDelegate = false
-
-        override func viewWillAppear(_ animated: Bool) {
-            super.viewWillAppear(animated)
-            disableSwipeBack()
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            disableSwipeBack()
-        }
-
-        override func viewWillDisappear(_ animated: Bool) {
-            super.viewWillDisappear(animated)
-            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
-            gesture.isEnabled = true
-            gesture.delegate = originalDelegate
-        }
-
-        private func disableSwipeBack() {
-            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
-            if !didCaptureOriginalDelegate {
-                originalDelegate = gesture.delegate
-                didCaptureOriginalDelegate = true
-            }
-            gesture.isEnabled = false
-            gesture.delegate = self
-        }
-
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            false
-        }
-    }
-
-    func makeUIViewController(context: Context) -> GestureDisablingViewController {
-        GestureDisablingViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: GestureDisablingViewController, context: Context) {
-        // Reasserted on every SwiftUI update too, in case something resets
-        // it between appear/disappear calls.
-        uiViewController.navigationController?.interactivePopGestureRecognizer?.isEnabled = false
     }
 }
