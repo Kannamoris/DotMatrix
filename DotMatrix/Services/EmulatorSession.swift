@@ -33,6 +33,19 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     /// See `MemoryBattleStateReader` for how the addresses were found.
     @Published private(set) var battleState: BattleState = .inactive
 
+    /// Catch-chance-per-ball for a recently-seen wild opponent, once the
+    /// player has stepped out of the custom battle controls to browse the
+    /// bag. `battleState.isActive` goes false the moment that happens —
+    /// opening the bag moves gMain.callback2 away from BattleMainCB2, which
+    /// is what phase detection is gated on — and BattleView disappears in
+    /// favor of the normal on-screen gamepad, which is what actually lets
+    /// the player navigate the bag today. This exists precisely for that
+    /// window: nil during battle proper, nil in a trainer battle (can't
+    /// throw balls at those at all), nil with an empty Poké Ball pocket,
+    /// and nil again a short while after the last real battle, so it
+    /// doesn't linger indefinitely once the player's back in the overworld.
+    @Published private(set) var catchAdvisor: CatchChance.Advisor?
+
     let displayTitle: String
     let contentID: String
     let screenWidth: Int
@@ -44,6 +57,11 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
     private let saves = SaveManager()
     private let states = StateManager()
     private let battleReader: any BattleStateReading = MemoryBattleStateReader(addresses: .verified)
+    /// How long catchAdvisor keeps showing a cached opponent after
+    /// battleState last went active — long enough to cover browsing the
+    /// bag, short enough that it doesn't linger once the player's back to
+    /// wandering the overworld with balls still in their bag.
+    private static let catchAdvisorGraceSeconds: CFAbsoluteTime = 20
 
     /// A single synthesized button press, held then released so the game
     /// sees a clean edge — its menu input reacts to a newly-pressed button,
@@ -323,6 +341,10 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
         var secondMarker = CFAbsoluteTimeGetCurrent()
         var lastSaveCheck = secondMarker
         var lastPublishedBattleState = BattleState.inactive
+        var lastPublishedCatchAdvisor: CatchChance.Advisor?
+        var lastKnownCatchTarget: CatchChance.Target?
+        var lastKnownOpponentNickname: String?
+        var lastOpponentSeenAt: CFAbsoluteTime = 0
         // Isolates the core's own cost from pacing sleeps and frame handoff,
         // so a slow device and a slow core don't look the same in the overlay.
         var runFrameSeconds: Double = 0
@@ -403,6 +425,44 @@ final class EmulatorSession: ObservableObject, @unchecked Sendable {
                 lastPublishedBattleState = newBattleState
                 DispatchQueue.main.async { [weak self] in
                     self?.battleState = newBattleState
+                }
+            }
+
+            if let opponent = newBattleState.opponent, newBattleState.isActive, !newBattleState.isTrainerBattle {
+                lastKnownCatchTarget = CatchChance.Target(
+                    catchRate: opponent.catchRate,
+                    maxHP: opponent.maxHP,
+                    currentHP: opponent.currentHP,
+                    level: opponent.level,
+                    statusFlags: opponent.statusFlags,
+                    types: [opponent.primaryType] + (opponent.secondaryType.map { [$0] } ?? [])
+                )
+                lastKnownOpponentNickname = opponent.nickname
+                lastOpponentSeenAt = CFAbsoluteTimeGetCurrent()
+            }
+
+            let recentlyInBattle = CFAbsoluteTimeGetCurrent() - lastOpponentSeenAt < Self.catchAdvisorGraceSeconds
+            var newCatchAdvisor: CatchChance.Advisor?
+            if !newBattleState.isActive, recentlyInBattle,
+               let target = lastKnownCatchTarget, let nickname = lastKnownOpponentNickname {
+                let pokeBalls = battleReader.pokeBallInventory(core)
+                if !pokeBalls.isEmpty {
+                    newCatchAdvisor = CatchChance.Advisor(
+                        opponentNickname: nickname,
+                        entries: pokeBalls.map {
+                            CatchChance.Advisor.Entry(
+                                ball: $0.ball,
+                                quantity: $0.quantity,
+                                percentage: CatchChance.percentage(ball: $0.ball, target: target)
+                            )
+                        }
+                    )
+                }
+            }
+            if newCatchAdvisor != lastPublishedCatchAdvisor {
+                lastPublishedCatchAdvisor = newCatchAdvisor
+                DispatchQueue.main.async { [weak self] in
+                    self?.catchAdvisor = newCatchAdvisor
                 }
             }
 

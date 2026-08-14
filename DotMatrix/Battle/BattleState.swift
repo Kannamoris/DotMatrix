@@ -21,6 +21,11 @@ struct BattleState: Equatable {
         /// Nil when the species has a single type.
         var primaryType: Int
         var secondaryType: Int?
+        /// gSpeciesInfo[speciesID].catchRate — a ROM constant, only
+        /// meaningful for the opponent, but read for both since it's cheap
+        /// and keeps decodeCombatant from needing a "which side is this"
+        /// branch. Used for the catch-chance calculator (see CatchChance).
+        var catchRate: Int
 
         var hpFraction: Double {
             maxHP > 0 ? min(1, max(0, Double(currentHP) / Double(maxHP))) : 0
@@ -61,6 +66,10 @@ struct BattleState: Equatable {
     var player: Combatant?
     var opponent: Combatant?
     var moves: [Move] = []
+    /// gBattleTypeFlags & BATTLE_TYPE_TRAINER — balls can't be thrown at a
+    /// trainer's Pokémon at all, so the catch-chance calculator hides
+    /// itself when this is set.
+    var isTrainerBattle: Bool = false
     /// Which slot the game's own cursor is on, purely for highlighting it in
     /// the native-equivalent position. -1 (nothing highlighted) when unknown:
     /// synthesized input doesn't need this to work — the game's own cursor
@@ -85,6 +94,9 @@ protocol BattleStateReading {
     /// Sample the current state. Called once per frame from the emulation
     /// thread, so it must not block.
     func sample(_ core: any EmulatorCore) -> BattleState
+    /// The Poké Ball pocket, for the catch-chance calculator. Independent of
+    /// sample() — see its doc comment on MemoryBattleStateReader for why.
+    func pokeBallInventory(_ core: any EmulatorCore) -> [(ball: CatchChance.Ball, quantity: Int)]
 }
 
 /// Reads battle state out of emulated RAM.
@@ -120,13 +132,31 @@ struct MemoryBattleStateReader: BattleStateReading {
         /// battleMoveSize below for why it's not the 9 the struct's named
         /// fields add up to), indexed by move ID.
         var battleMoves: UInt32
+        /// gSpeciesInfo. struct SpeciesInfo, 28 bytes each (see
+        /// speciesInfoSize below — same "trust the real ROM layout, not the
+        /// struct's named-field byte count" situation as battleMoveSize).
+        var speciesInfo: UInt32
+        /// gSaveBlock1Ptr — a pointer *variable*, not the save data itself;
+        /// dereferenced fresh on every read rather than cached, since
+        /// there's no guarantee the save block never moves.
+        var saveBlock1Ptr: UInt32
+        /// gBattleTypeFlags. Unlike mainCallback2, this keeps its last
+        /// value even once gMain.callback2 has left BattleMainCB2 (e.g.
+        /// while the bag opened from battle is up), so it's still readable
+        /// then. Only used for the BATTLE_TYPE_TRAINER bit here — not as an
+        /// "is a battle active" signal, since it's legitimately 0 for a
+        /// plain wild battle (see mainCallback2's own comment above).
+        var battleTypeFlags: UInt32
 
         /// Verified 2026-08-13 against Pokémon Emerald (USA), BPEE.
         static let verified = Addresses(
             mainCallback2: 0x030022C4,
             battlerControllerFunc: 0x03005D60,
             battleMons: 0x0202_4084,
-            battleMoves: 0x0831_C898
+            battleMoves: 0x0831_C898,
+            speciesInfo: 0x0832_03CC,
+            saveBlock1Ptr: 0x0300_5D8C,
+            battleTypeFlags: 0x0202_2FEC
         )
     }
 
@@ -150,6 +180,28 @@ struct MemoryBattleStateReader: BattleStateReading {
     /// for slot 0, and on HORN DRILL's priority byte (0) for LEER (id 43),
     /// which is what actually surfaced this as a visible bug.
     private static let battleMoveSize: UInt32 = 12
+    /// struct SpeciesInfo's named fields (include/pokemon.h) sum to 26
+    /// bytes, but the real ROM stride is 28 (0x1C) — confirmed the same two
+    /// ways as battleMoveSize: EmeraldRecomp's symbol table places the next
+    /// data symbol (sBulbasaurLevelUpLearnset) exactly 11536 bytes after
+    /// gSpeciesInfo, and 11536 / 412 (NUM_SPECIES) = 28 exactly; and
+    /// besteon/Ironmon-Tracker hardcodes sizeofBaseStatsPokemon = 0x1C.
+    private static let speciesInfoSize: UInt32 = 28
+    /// SpeciesInfo.catchRate's offset within an entry — this one wasn't
+    /// affected by the stride bug above, pret's own offset comment
+    /// (/* 0x08 */) matches Ironmon's offsetCatchRate = 0x8 exactly.
+    private static let catchRateOffset: UInt32 = 0x08
+    /// BATTLE_TYPE_TRAINER (include/constants/battle.h).
+    private static let battleTypeTrainerFlag: UInt32 = 1 << 3
+    /// SaveBlock1's bagPocket_PokeBalls field (include/global.h) — offset
+    /// within the save block, and its slot count. Each slot is a 4-byte
+    /// struct ItemSlot (u16 itemId, u16 quantity). Confirmed against
+    /// besteon/Ironmon-Tracker's independently-sourced
+    /// bagPocket_Balls_offset (0x650) / bagPocket_Balls_Size (0x10), which
+    /// match pret's own offset comment and the byte gap to the next pocket
+    /// field (bagPocket_TMHM at 0x690) exactly: (0x690-0x650)/4 = 16.
+    private static let pokeBallPocketOffset: UInt32 = 0x650
+    private static let pokeBallPocketSlotCount = 16
 
     var addresses: Addresses?
 
@@ -170,11 +222,35 @@ struct MemoryBattleStateReader: BattleStateReading {
             addresses.battleMons + Self.battlePokemonSize,
             count: Int(Self.battlePokemonSize)
         )
-        state.player = decodeCombatant(playerBytes)
-        state.opponent = decodeCombatant(opponentBytes)
+        state.player = decodeCombatant(playerBytes, core: core, speciesInfo: addresses.speciesInfo)
+        state.opponent = decodeCombatant(opponentBytes, core: core, speciesInfo: addresses.speciesInfo)
         state.moves = decodeMoves(playerBytes, core: core, battleMoves: addresses.battleMoves)
+        state.isTrainerBattle = readWord(core, addresses.battleTypeFlags) & Self.battleTypeTrainerFlag != 0
 
         return state
+    }
+
+    /// The Poké Ball pocket, read independently of sample() — opening the
+    /// bag from battle moves gMain.callback2 away from BattleMainCB2 (the
+    /// same signal sample() gates everything on), but the save block itself
+    /// is unaffected and still readable throughout.
+    func pokeBallInventory(_ core: any EmulatorCore) -> [(ball: CatchChance.Ball, quantity: Int)] {
+        guard let addresses else { return [] }
+        let saveBlock1 = readWord(core, addresses.saveBlock1Ptr)
+        guard saveBlock1 != 0 else { return [] }
+
+        let byteCount = Self.pokeBallPocketSlotCount * 4
+        let bytes = core.readMemory(saveBlock1 + Self.pokeBallPocketOffset, count: byteCount)
+        guard bytes.count == byteCount else { return [] }
+
+        var slots: [(ball: CatchChance.Ball, quantity: Int)] = []
+        for slot in 0..<Self.pokeBallPocketSlotCount {
+            let itemID = u16(bytes, slot * 4)
+            let quantity = u16(bytes, slot * 4 + 2)
+            guard quantity > 0, let ball = CatchChance.Ball(rawValue: itemID) else { continue }
+            slots.append((ball, quantity))
+        }
+        return slots
     }
 
     // MARK: Decoding
@@ -188,7 +264,9 @@ struct MemoryBattleStateReader: BattleStateReading {
     /// struct BattlePokemon (include/pokemon.h): species@0x00, moves[4]@0x0C,
     /// types[2]@0x21, pp[4]@0x24, hp@0x28, level@0x2A, maxHP@0x2C,
     /// nickname[11]@0x30, ppBonuses@0x3B, status1@0x4C.
-    private func decodeCombatant(_ bytes: [UInt8]) -> BattleState.Combatant? {
+    private func decodeCombatant(
+        _ bytes: [UInt8], core: any EmulatorCore, speciesInfo: UInt32
+    ) -> BattleState.Combatant? {
         guard bytes.count == Int(Self.battlePokemonSize) else { return nil }
         let species = u16(bytes, 0x00)
         guard species != 0 else { return nil }
@@ -205,8 +283,15 @@ struct MemoryBattleStateReader: BattleStateReading {
             maxHP: u16(bytes, 0x2C),
             statusFlags: u32(bytes, 0x4C),
             primaryType: type0,
-            secondaryType: type1 == type0 ? nil : type1
+            secondaryType: type1 == type0 ? nil : type1,
+            catchRate: speciesCatchRate(species: species, core: core, speciesInfo: speciesInfo)
         )
+    }
+
+    private func speciesCatchRate(species: Int, core: any EmulatorCore, speciesInfo: UInt32) -> Int {
+        let address = speciesInfo + UInt32(species) * Self.speciesInfoSize + Self.catchRateOffset
+        let bytes = core.readMemory(address, count: 1)
+        return Int(bytes.first ?? 0)
     }
 
     private func decodeMoves(_ playerBytes: [UInt8], core: any EmulatorCore, battleMoves: UInt32) -> [BattleState.Move] {

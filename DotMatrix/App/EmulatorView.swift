@@ -170,6 +170,7 @@ private struct RunningSessionView: View {
             }
 
             diagnosticsOverlay
+            catchAdvisorOverlay
         }
     }
 
@@ -231,6 +232,26 @@ private struct RunningSessionView: View {
         }
         .padding(8)
         .allowsHitTesting(false)
+    }
+
+    /// Only appears once the player has stepped out of the custom battle
+    /// controls to browse the bag mid wild-battle — see
+    /// `EmulatorSession.catchAdvisor` for exactly when. Top-trailing so it
+    /// doesn't collide with the FPS/diagnostics readout, which anchors
+    /// top-leading.
+    @ViewBuilder
+    private var catchAdvisorOverlay: some View {
+        if let advisor = session.catchAdvisor {
+            VStack {
+                HStack {
+                    Spacer()
+                    CatchAdvisorOverlay(advisor: advisor)
+                }
+                Spacer()
+            }
+            .padding(8)
+            .allowsHitTesting(false)
+        }
     }
 
     private var display: some View {
