@@ -313,20 +313,56 @@ private struct PauseMenuButton: View {
 /// long as this view is on screen. SwiftUI has no direct API for this —
 /// `interactivePopGestureRecognizer` is a UIKit-only knob on the navigation
 /// controller, reached here through an invisible view controller riding
-/// along in the background. Toggled on `viewWillAppear`/`viewWillDisappear`
-/// rather than once at creation, since the same navigation controller is
-/// shared with whatever's behind this screen and needs the gesture back
-/// once this one's gone.
+/// along in the background.
+///
+/// Just setting `isEnabled = false` once on appear turned out not to be
+/// enough on its own — something (most likely UIKit reconfiguring the
+/// gesture as part of the navigation bar/toolbar updates this screen makes
+/// frequently) was resetting it back to `true` before a real swipe. This
+/// backs that up with the gesture's own delegate refusing to let it begin
+/// at all, which is asked fresh on every touch rather than relying on a
+/// flag that can get flipped behind this view's back — and reasserts
+/// `isEnabled = false` again in `viewDidAppear`, after the navigation
+/// controller has finished setting up the push transition, not just in
+/// `viewWillAppear`, before it has.
 private struct DisablesInteractivePopGesture: UIViewControllerRepresentable {
-    final class GestureDisablingViewController: UIViewController {
+    final class GestureDisablingViewController: UIViewController, UIGestureRecognizerDelegate {
+        /// Whatever delegate (if any) the gesture had before this view
+        /// showed up — restored on the way out rather than clobbered, since
+        /// the same navigation controller and gesture recognizer are shared
+        /// with whatever's behind this screen.
+        private var originalDelegate: UIGestureRecognizerDelegate?
+        private var didCaptureOriginalDelegate = false
+
         override func viewWillAppear(_ animated: Bool) {
             super.viewWillAppear(animated)
-            navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+            disableSwipeBack()
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            disableSwipeBack()
         }
 
         override func viewWillDisappear(_ animated: Bool) {
             super.viewWillDisappear(animated)
-            navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
+            gesture.isEnabled = true
+            gesture.delegate = originalDelegate
+        }
+
+        private func disableSwipeBack() {
+            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
+            if !didCaptureOriginalDelegate {
+                originalDelegate = gesture.delegate
+                didCaptureOriginalDelegate = true
+            }
+            gesture.isEnabled = false
+            gesture.delegate = self
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            false
         }
     }
 
@@ -334,5 +370,9 @@ private struct DisablesInteractivePopGesture: UIViewControllerRepresentable {
         GestureDisablingViewController()
     }
 
-    func updateUIViewController(_ uiViewController: GestureDisablingViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: GestureDisablingViewController, context: Context) {
+        // Reasserted on every SwiftUI update too, in case something resets
+        // it between appear/disappear calls.
+        uiViewController.navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+    }
 }
