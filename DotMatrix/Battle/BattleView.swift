@@ -39,26 +39,31 @@ struct BattleView: View {
 
     // MARK: Scene
 
-    /// The emulated screen. Cropped to just the battlefield while the custom
-    /// action/move grid is up (it replaces the game's own menu there, so
-    /// showing both would be redundant) and shown in full otherwise — the
-    /// game draws messages, damage numbers and faint text in the bottom third
-    /// that the crop would otherwise hide with no way to read or advance it.
+    /// The emulated screen, always shown in full and at a fixed aspect ratio.
+    ///
+    /// This used to crop to just the battlefield while the custom action/move
+    /// grid was up, to hide the game's own (now redundant) menu — but the
+    /// phase changes constantly during a turn (action select, move select,
+    /// message, back to action select...), and flipping the crop each time
+    /// changed the scene's aspect ratio, so the video pane visibly resized on
+    /// every single transition. Showing the same fixed frame at every phase
+    /// trades a small sliver of redundant native menu for a scene that never
+    /// jumps around.
     private var scene: some View {
         MetalDisplayView(
             session: session,
             gridStrength: 0,
             smoothing: 0,
-            sourceRect: BattleLayout.sceneRegion(for: state.phase)
+            sourceRect: BattleLayout.fullScreen
         )
-        .aspectRatio(BattleLayout.sceneAspect(for: state.phase), contentMode: .fit)
+        .aspectRatio(BattleLayout.aspect, contentMode: .fit)
         .frame(maxWidth: .infinity)
     }
 
     private func sceneHeight(in geometry: GeometryProxy) -> CGFloat {
         // Give the scene the width, and whatever height that implies, capped so
         // the controls always keep a usable share of a short screen.
-        let natural = geometry.size.width / BattleLayout.sceneAspect(for: state.phase)
+        let natural = geometry.size.width / BattleLayout.aspect
         return min(natural, geometry.size.height * 0.55)
     }
 
@@ -239,30 +244,12 @@ enum BattleAction: CaseIterable {
     }
 }
 
-/// Where the battlefield sits within the emulated screen, and how it is scaled.
+/// The emulated screen's native size and aspect ratio. The scene is always
+/// shown in full at this fixed shape — see the comment on `scene` in
+/// `BattleView` for why it no longer varies by phase.
 enum BattleLayout {
-    /// Full native screen, 240x160.
     static let fullScreen = CGRect(x: 0, y: 0, width: 240, height: 160)
-
-    /// The game draws its menu across the bottom third of the screen.
-    /// Cropping it away leaves just the battlefield, in source pixels.
-    static let battlefieldOnly = CGRect(x: 0, y: 0, width: 240, height: 112)
-
-    /// Cropped to the battlefield only while the custom action/move grid
-    /// replaces the game's own menu; full screen otherwise, so messages,
-    /// damage numbers and faint text — which the game draws in the region
-    /// that would otherwise be cropped away — stay visible.
-    static func sceneRegion(for phase: BattleState.Phase) -> CGRect {
-        switch phase {
-        case .actionSelection, .moveSelection: return battlefieldOnly
-        default: return fullScreen
-        }
-    }
-
-    static func sceneAspect(for phase: BattleState.Phase) -> CGFloat {
-        let region = sceneRegion(for: phase)
-        return region.width / region.height
-    }
+    static let aspect: CGFloat = fullScreen.width / fullScreen.height
 }
 
 // MARK: - Pieces
