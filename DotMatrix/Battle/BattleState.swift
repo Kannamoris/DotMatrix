@@ -116,7 +116,9 @@ struct MemoryBattleStateReader: BattleStateReading {
         /// battler: [0] is the player's active mon, [1] the opponent's, for
         /// the single (non-double) battles this UI targets.
         var battleMons: UInt32
-        /// gBattleMoves. struct BattleMove, 9 bytes each, indexed by move ID.
+        /// gBattleMoves. struct BattleMove, 12 bytes each (see
+        /// battleMoveSize below for why it's not the 9 the struct's named
+        /// fields add up to), indexed by move ID.
         var battleMoves: UInt32
 
         /// Verified 2026-08-13 against Pokémon Emerald (USA), BPEE.
@@ -135,7 +137,19 @@ struct MemoryBattleStateReader: BattleStateReading {
     private static let handleInputChooseMove: UInt32 = 0x0805_7BFD
 
     private static let battlePokemonSize: UInt32 = 0x58
-    private static let battleMoveSize: UInt32 = 9
+    /// struct BattleMove is 9 bytes of named fields (effect, power, type,
+    /// accuracy, pp, secondaryEffectChance, target, priority, flags) per
+    /// pret/pokeemerald's include/pokemon.h, but the real per-entry stride in
+    /// ROM is 12 (0xC), not 9 — confirmed two ways: EmeraldRecomp's symbol
+    /// table places the next data symbol (sCombinedMoves) exactly 4260 bytes
+    /// after gBattleMoves, and 4260 / 355 (MOVES_COUNT) = 12 exactly; and
+    /// besteon/Ironmon-Tracker, which reads this same table from live
+    /// hardware/emulator RAM, hardcodes `sizeofBattleMove = 0xC`. Using 9
+    /// here previously made every move's PP read drift by 3 bytes per move
+    /// ID — coincidentally landing exactly on POUND's own power stat (40)
+    /// for slot 0, and on HORN DRILL's priority byte (0) for LEER (id 43),
+    /// which is what actually surfaced this as a visible bug.
+    private static let battleMoveSize: UInt32 = 12
 
     var addresses: Addresses?
 
