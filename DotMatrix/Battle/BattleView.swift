@@ -308,9 +308,7 @@ private struct MoveCell: View {
 
                 HStack(spacing: 6) {
                     if let typeName = TypeNameCache.shared.name(for: move.type) {
-                        Text(typeName.uppercased())
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
+                        Gen3Label(text: typeName.uppercased(), scale: 1)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
