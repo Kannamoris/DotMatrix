@@ -32,11 +32,10 @@ struct EmulatorView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(session?.displayTitle ?? entry.title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white)
-            }
+            // No title item: the ROM name added a solid black banner across
+            // the top of the screen for no benefit — the player already
+            // knows what they're playing — so this now just leaves the back
+            // button and the "..." menu floating over the black backdrop.
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let session {
@@ -67,8 +66,7 @@ struct EmulatorView: View {
                 }
             }
         }
-        .toolbarBackground(.black, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings)
