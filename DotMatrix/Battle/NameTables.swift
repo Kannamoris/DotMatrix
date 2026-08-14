@@ -130,12 +130,20 @@ struct CartridgeTextReader {
     private func decodeString(at address: UInt32, maxLength: Int) -> String? {
         let bytes = core.readMemory(address, count: maxLength)
         guard !bytes.isEmpty else { return nil }
+        return Gen3Text.decode(bytes)
+    }
+}
 
+/// Gen 3's single-byte text encoding. Shared by anything decoding strings out
+/// of the cartridge or emulated RAM — a Pokémon's nickname in `gBattleMons`
+/// uses the exact same character set as move/type names in the ROM.
+enum Gen3Text {
+    /// 0xFF terminates a string in this format.
+    static func decode(_ bytes: [UInt8]) -> String? {
         var result = ""
         for byte in bytes {
-            // 0xFF terminates a string in this format.
             if byte == 0xFF { break }
-            guard let character = Self.characterMap[byte] else { continue }
+            guard let character = characterMap[byte] else { continue }
             result.append(character)
         }
         return result.isEmpty ? nil : result

@@ -8,6 +8,11 @@ import Foundation
 struct BattleState: Equatable {
     struct Combatant: Equatable {
         var speciesID: Int
+        /// Decoded from gBattleMons directly, unlike move/type names — it's a
+        /// per-battle RAM value tied to this specific Pokémon, not a ROM
+        /// table keyed by a stable ID, so there's no separate cache to look
+        /// it up from at display time the way moves and types have.
+        var nickname: String
         var level: Int
         var currentHP: Int
         var maxHP: Int
@@ -168,7 +173,7 @@ struct MemoryBattleStateReader: BattleStateReading {
 
     /// struct BattlePokemon (include/pokemon.h): species@0x00, moves[4]@0x0C,
     /// types[2]@0x21, pp[4]@0x24, hp@0x28, level@0x2A, maxHP@0x2C,
-    /// ppBonuses@0x3B, status1@0x4C.
+    /// nickname[11]@0x30, ppBonuses@0x3B, status1@0x4C.
     private func decodeCombatant(_ bytes: [UInt8]) -> BattleState.Combatant? {
         guard bytes.count == Int(Self.battlePokemonSize) else { return nil }
         let species = u16(bytes, 0x00)
@@ -176,9 +181,11 @@ struct MemoryBattleStateReader: BattleStateReading {
 
         let type0 = Int(bytes[0x21])
         let type1 = Int(bytes[0x22])
+        let nickname = Gen3Text.decode(Array(bytes[0x30..<0x3B])) ?? "???"
 
         return BattleState.Combatant(
             speciesID: species,
+            nickname: nickname,
             level: Int(bytes[0x2A]),
             currentHP: u16(bytes, 0x28),
             maxHP: u16(bytes, 0x2C),

@@ -84,10 +84,10 @@ struct BattleView: View {
     private var combatantBars: some View {
         HStack(spacing: 14) {
             if let player = state.player {
-                HealthBar(combatant: player, label: "Yours", alignment: .leading)
+                HealthBar(combatant: player, alignment: .leading)
             }
             if let opponent = state.opponent {
-                HealthBar(combatant: opponent, label: "Foe", alignment: .trailing)
+                HealthBar(combatant: opponent, alignment: .trailing)
             }
         }
     }
@@ -212,7 +212,6 @@ enum BattleLayout {
 
 private struct HealthBar: View {
     let combatant: BattleState.Combatant
-    let label: String
     let alignment: HorizontalAlignment
 
     private var tint: Color {
@@ -226,7 +225,7 @@ private struct HealthBar: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
             HStack(spacing: 6) {
-                Text(label)
+                Text(combatant.nickname)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text("Lv\(combatant.level)")
